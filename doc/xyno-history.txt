@@ -1,0 +1,182 @@
+*xyno-history.txt*  Local History for Neovim: snapshots of the worktree in private git refs
+
+                          xyno-history.nvim
+
+==============================================================================
+CONTENTS                                                    *xyno-history-contents*
+
+  1. Introduction ............................. |xyno-history|
+  2. Requirements ............................. |xyno-history-requirements|
+  3. Setup and options ........................ |xyno-history-setup|
+  4. Commands ................................. |xyno-history-commands|
+  5. Keymaps .................................. |xyno-history-keymaps|
+  6. Lua API .................................. |xyno-history-api|
+  7. How it works ............................. |xyno-history-how|
+  8. Recovering without the plugin ............ |xyno-history-recover|
+  9. Platforms ................................ |xyno-history-platforms|
+ 10. License and origin ....................... |xyno-history-license|
+
+==============================================================================
+1. INTRODUCTION                                                    *xyno-history*
+
+xyno-history.nvim takes a snapshot of the whole worktree on every save and
+keeps it in private git refs (refs/lochist/<branch>). Deleted files,
+`git reset --hard` and edits that |undo| cannot bring back stay recoverable.
+The real index, the stash and the branches are never touched.
+
+The idea is inspired by the Local History of JetBrains IDEs, which I still use.
+This plugin is independent and not affiliated with JetBrains.
+
+==============================================================================
+2. REQUIREMENTS                                            *xyno-history-requirements*
+
+  - Neovim 0.12 or newer.
+  - `git` in $PATH. Files must live in a git worktree (a `.git` is found
+    upward from the file).
+  - Optional: an auto-save plugin that fires `User AutoSaveWritePost` with
+    `data.saved_buffer` (auto-save.nvim does). Plain |:write| is always
+    covered through |BufWritePost|.
+
+==============================================================================
+3. SETUP AND OPTIONS                                            *xyno-history-setup*
+
+>lua
+    require("xyno_history").setup({
+      commands = true,        -- register :LocalHistory, :LocalHistoryRestore, :LocalHistoryPrune
+      keymaps = false,        -- false | true | { browse = lhs, restore = lhs, prune = lhs }
+      max_bytes = nil,        -- per-file cap in bytes; nil = 10 MB; <= 0 = no cap
+      max_total_bytes = nil,  -- budget of one snapshot; nil = 200 MB; <= 0 = none
+    })
+<
+
+                                                            *xyno-history-opts*
+commands          boolean, default true. Register the user commands.
+keymaps           false (default): no global keymap is set. true maps
+                  `<leader>gH` to |:LocalHistory|. A table maps each of
+                  "browse", "restore" and "prune" to the left-hand side you
+                  give. See |xyno-history-keymaps|.
+max_bytes         Untracked or modified files bigger than this are left out
+                  of a snapshot (one INFO notice per file). Default 10 MB.
+max_total_bytes   When the files that passed the per-file cap still add up to
+                  more than this, the largest are left out until it fits.
+                  Default 200 MB.
+
+setup() registers the autocommands (|BufWritePost|, `User AutoSaveWritePost`,
+|VimLeavePre|) in the group `xyno_history`. Calling it again replaces them.
+
+==============================================================================
+4. COMMANDS                                                *xyno-history-commands*
+
+                                                                *:LocalHistory*
+:LocalHistory           Pick a snapshot of the current file (newest first,
+                        up to 100, "<age>  <message>") and diff against it in
+                        a vertical scratch buffer.
+
+                                                         *:LocalHistoryRestore*
+:LocalHistoryRestore    Pick a snapshot and replace the current buffer's text
+                        with that version after a confirmation. The file on
+                        disk and the index are untouched; the buffer is left
+                        modified (undo with `u`).
+
+                                                           *:LocalHistoryPrune*
+:LocalHistoryPrune[!] [N | Nd]
+                        Drop old snapshots of every branch of the current
+                        repository. `N` keeps the newest N per branch, `Nd`
+                        keeps the last N days (default 30d). The newest
+                        snapshot always stays. Unreachable objects older than
+                        an hour are then collected with `git gc`. With [!]
+                        every unreachable object is collected (`--prune=now`),
+                        also younger ones and other tools' dangling commits.
+
+==============================================================================
+5. KEYMAPS                                                  *xyno-history-keymaps*
+
+No keymap is set by default. With lazy.nvim, define them in the plugin spec:
+>lua
+    {
+      "xynorash/xyno-history.nvim",
+      event = "VeryLazy",
+      opts = {},
+      keys = {
+        { "<leader>gH", "<cmd>LocalHistory<cr>", desc = "Local history (file)" },
+        { "<leader>gR", "<cmd>LocalHistoryRestore<cr>", desc = "Local history restore" },
+      },
+    }
+<
+Or let setup() map them: `keymaps = true` or
+`keymaps = { browse = "<leader>gH", restore = "<leader>gR" }`.
+
+==============================================================================
+6. LUA API                                                       *xyno-history-api*
+
+All functions are in the module `xyno_history`.
+
+setup({opts})                                          *xyno_history.setup()*
+    See |xyno-history-setup|.
+
+snapshot({opts})                                    *xyno_history.snapshot()*
+    Snapshot the worktree that contains `opts.path` (default: the current
+    buffer). Fields of {opts}:
+      path     string   a file or directory inside the worktree
+      force    boolean  ignore the 60 s throttle window
+      label    string   commit message (default "autosave")
+      done     fun(commit?: string)  called once; `commit` is nil when nothing
+               changed or the snapshot failed
+    A non-forced call inside the throttle window is not lost: one trailing
+    snapshot runs when the window ends.
+
+browse()                                              *xyno_history.browse()*
+    What |:LocalHistory| does.
+
+restore()                                            *xyno_history.restore()*
+    What |:LocalHistoryRestore| does.
+
+prune({arg}, {now})                                    *xyno_history.prune()*
+    What |:LocalHistoryPrune| does; {arg} is "N" or "Nd", {now} the bang.
+
+config                                               *xyno_history.config*
+    The options table; setup() merges its argument into it.
+
+==============================================================================
+7. HOW IT WORKS                                                *xyno-history-how*
+
+A snapshot is a commit on `refs/lochist/<key>` whose tree is the whole
+worktree: untracked files included, `.gitignore` and the global ignore file
+respected, `target/` (the root and workspace members) excluded through
+`.git/info/exclude`. It is built with `git add -A` into a private index file
+(`.git/lochist-index.<pid>`, one per Neovim process), then `write-tree`,
+`commit-tree` and a compare-and-swap `update-ref`, so concurrent Neovim
+instances never overwrite each other's snapshot.
+
+<key> is the branch name with `%` written as `%25` and `/` as `%2F`, or
+`%detached-<short sha>` for a detached HEAD. Saves are throttled to one
+snapshot per 60 seconds; a failed snapshot is retried once after 10 seconds. A
+git that hangs is killed after 30 seconds. On exit, a pending or in-flight
+snapshot is taken synchronously within a 5 second budget.
+
+==============================================================================
+8. RECOVERING WITHOUT THE PLUGIN                           *xyno-history-recover*
+
+Without the plugin, the snapshots are plain git:
+>
+    git log refs/lochist/main
+    git restore --source=refs/lochist/main --worktree -- path/to/file
+<
+They stay in the repository until pruned. `git push --mirror` would transfer
+them, so push explicit refs if you do not want that.
+
+==============================================================================
+9. PLATFORMS                                                *xyno-history-platforms*
+
+Linux: tested by the specs in this repository (`nvim -l tests/run.lua`).
+Windows: no evidence. The original spec was skipped there.
+macOS: not tested in this repository. See the README for what the original
+configuration's CI showed.
+
+==============================================================================
+10. LICENSE AND ORIGIN                                      *xyno-history-license*
+
+MIT, Copyright (c) 2026 Xynorash. Extracted from xynovim
+(https://github.com/xynorash/xynovim).
+
+ vim:tw=78:ts=8:ft=help:norl:
