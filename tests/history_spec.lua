@@ -374,6 +374,7 @@ before_each(function()
   vim.fn.mkdir(ctl, "p")
   LH.config.max_bytes = nil
   LH.config.max_total_bytes = nil
+  LH.config.retention = false -- automatic pruning has its own specs (retention_spec.lua)
   time_offset, timer_scale, scale_watchdog = 0, nil, false
   deferred, timer_starts, timer_news = {}, {}, 0
   notes = {}
@@ -703,7 +704,7 @@ describe("size cap (the max_bytes option)", function()
     write(root .. "/small.txt", "s\n")
     local c = snap(root)
     H.eq({ "a.txt", "small.txt" }, names(root, c))
-    H.ok(log_count(vim.pesc("add -A --ignore-errors -- . :(exclude,literal)big.bin")) == 1, "pathspec in git add")
+    H.ok(log_count("^[^\t]*\t" .. vim.pesc("add -A --ignore-errors -- . :(exclude,literal)big.bin")) == 1, "pathspec in git add")
     local n = note_matching("local history: skipping big.bin")
     H.eq(1, #n)
     H.eq("local history: skipping big.bin (2 MB, over the 1 MB cap; setup option max_bytes)", n[1].msg)
@@ -761,7 +762,7 @@ describe("size cap (the max_bytes option)", function()
     local c2 = snap(root)
     H.ok(c2, "a new commit (the file dropped out)")
     H.eq({ "a.txt", "tracked.bin" }, names(root, c2))
-    H.ok(log_count("rm %-%-cached %-r %-q %-f %-%-ignore%-unmatch %-%- grow%.bin") == 1, "git rm --cached ran")
+    H.ok(log_count("rm %-%-cached %-r %-q %-f %-%-ignore%-unmatch %-%- :%(literal%)grow%.bin") == 1, "git rm --cached ran")
   end)
 end)
 
