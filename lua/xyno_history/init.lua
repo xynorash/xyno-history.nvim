@@ -1720,6 +1720,8 @@ local function spawn_exit_workers(targets)
       cfg[k] = v
     end
   end
+  -- read through the table (a caller may serve them from a metatable, as xynovim's vim.g caps do)
+  cfg.max_bytes, cfg.max_total_bytes = M.config.max_bytes, M.config.max_total_bytes
   for _, root in ipairs(targets) do
     local gitdir = gitdirs[root] or (vim.uv.fs_stat(root .. "/.git") and root .. "/.git")
     local st = gitdir and vim.uv.fs_stat(gitdir)
