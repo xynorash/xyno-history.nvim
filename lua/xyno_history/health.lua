@@ -126,8 +126,8 @@ function M.check()
   if a < 2 or (a == 2 and b < 38) then
     h.warn("git older than 2.38: filter/diff driver commands from the repository config are not enumerated and neutralised", { "upgrade git" })
   end
-  if a < 2 or (a == 2 and b < 43) then
-    h.warn("git older than 2.43 has no GIT_ATTR_SOURCE: .gitattributes in the worktree can still convert line endings in snapshots", { "upgrade git" })
+  if a < 2 or (a == 2 and b < 41) then
+    h.warn("git older than 2.41 has no GIT_ATTR_SOURCE: .gitattributes in the worktree can still convert line endings in snapshots", { "upgrade git" })
   else
     h.ok("attributes are read from the empty tree: .gitattributes cannot run filters or convert line endings")
   end

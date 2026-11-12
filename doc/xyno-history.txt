@@ -46,6 +46,15 @@ This plugin is independent and not affiliated with JetBrains.
       keymaps = false,        -- false | true | { browse = lhs, restore = lhs, prune = lhs }
       max_bytes = nil,        -- per-file cap in bytes; nil = 10 MB; <= 0 = no cap
       max_total_bytes = nil,  -- budget of one snapshot; nil = 200 MB; <= 0 = none
+      throttle_s = 60,        -- 0 .. 86400
+      fail_backoff_s = 10,    -- 1 .. 3600
+      full_scan_s = 300,      -- 0 .. 86400; 0 = walk the worktree on every snapshot
+      exit_budget_ms = 5000,  -- 0 .. 60000; 0 = no exit snapshot
+      list_limit = 100,       -- 1 .. 10000
+      exclude = nil,          -- nil = default secrets list; list = replace; false = none
+      exclude_extra = {},
+      push_guard = false,
+      retention = { auto = true, max_count = 1000, max_age_days = 30, interval_h = 6 },
     })
 <
 
@@ -61,6 +70,28 @@ max_total_bytes   When the files that passed the per-file cap still add up to
                   more than this, the largest are left out until it fits.
                   Default 200 MB.
 
+throttle_s, fail_backoff_s, full_scan_s, exit_budget_ms, list_limit
+                  Validated numbers. A wrong type, an out-of-range value or
+                  an unknown key is reported in one warning by setup() and
+                  the default is used.
+exclude           Gitignore-style names (no `!`, case-insensitive) left out
+                  of every snapshot, tracked or not: the default list covers
+                  .env*, *.pem, *.key, id_rsa*, .npmrc, .netrc,
+                  credentials.json ... (see `xyno_history.default_exclude`).
+                  A list replaces it, `false` excludes nothing.
+exclude_extra     Patterns added to the list.
+push_guard        true: write .git/hooks/pre-push (only if there is none)
+                  that refuses pushes carrying refs/lochist/*. See
+                  |xyno-history-secrets|.
+retention         Automatic pruning in the background, at most every
+                  interval_h hours: older than max_age_days, beyond the
+                  newest max_count per branch; false switches a criterion
+                  or (as a whole) the feature off.
+full_scan_s       Snapshots after the first walk the worktree only this
+                  often; in between they look at saved files and
+                  `git diff-files`. New files created outside Neovim wait
+                  for the next full scan.
+
 setup() registers the autocommands (|BufWritePost|, `User AutoSaveWritePost`,
 |VimLeavePre|) in the group `xyno_history`. Calling it again replaces them.
 
@@ -69,12 +100,14 @@ setup() registers the autocommands (|BufWritePost|, `User AutoSaveWritePost`,
 
                                                                 *:LocalHistory*
 :LocalHistory           Pick a snapshot of the current file (newest first,
-                        up to 100, "<age>  <message>") and diff against it in
+                        up to list_limit, "<age>  <message>", with the old
+                        name when the file was renamed) and diff against it in
                         a vertical scratch buffer.
 
                                                          *:LocalHistoryRestore*
 :LocalHistoryRestore    Pick a snapshot and replace the current buffer's text
-                        with that version after a confirmation. The file on
+                        with that version after a confirmation, with its
+                        line endings and final newline. The file on
                         disk and the index are untouched; the buffer is left
                         modified (undo with `u`).
 
@@ -148,10 +181,19 @@ respected, `target/` (the root and workspace members) excluded through
 `commit-tree` and a compare-and-swap `update-ref`, so concurrent Neovim
 instances never overwrite each other's snapshot.
 
+Between full scans a snapshot only adds the saved files and the tracked files
+`git diff-files` reports (see |xyno-history-setup| full_scan_s). Every git call
+runs with GIT_CONFIG_COUNT overrides for the settings that execute commands
+(core.fsmonitor, core.hooksPath, core.sshCommand, filter drivers ...), with
+GIT_WORK_TREE pinned to the directory holding .git and with attributes read
+from the empty tree, so a hostile repository config cannot run code and
+.gitattributes cannot change the stored bytes.
+
 <key> is the branch name with `%` written as `%25` and `/` as `%2F`, or
 `%detached-<short sha>` for a detached HEAD. Saves are throttled to one
 snapshot per 60 seconds; a failed snapshot is retried once after 10 seconds. A
-git that hangs is killed after 30 seconds. On exit, a pending or in-flight
+git that hangs is killed after 30 seconds. If the retry fails too, one warning
+names the reason; |:checkhealth| xyno_history lists it. On exit, a pending or in-flight
 snapshot is taken synchronously within a 5 second budget.
 
 ==============================================================================
@@ -162,8 +204,16 @@ Without the plugin, the snapshots are plain git:
     git log refs/lochist/main
     git restore --source=refs/lochist/main --worktree -- path/to/file
 <
-They stay in the repository until pruned. `git push --mirror` would transfer
-them, so push explicit refs if you do not want that.
+They stay in the repository until pruned.
+
+                                                          *xyno-history-secrets*
+Snapshots are git objects in the repository's `.git`. `git push --mirror`, a
+remote with `mirror = true`, a `refs/*:refs/*` refspec, `git clone --mirror`
+and `git bundle --all` carry refs/lochist/* along; a plain `git push` and
+`git push --all` do not. Likely secrets are therefore left out of snapshots
+(option `exclude`), and `push_guard = true` installs a pre-push hook that
+refuses refs/lochist/*. |:checkhealth| xyno_history reports mirror remotes
+and the guard.
 
 ==============================================================================
 9. PLATFORMS                                                *xyno-history-platforms*
