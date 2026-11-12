@@ -1217,7 +1217,7 @@ end)
 local child_script = [[
 package.path = vim.env.XYNO_REPO .. "/lua/?.lua;" .. vim.env.XYNO_REPO .. "/lua/?/init.lua;" .. package.path
 local LH = require("xyno_history")
-LH.setup()
+LH.setup({ exit_mode = vim.env.XYNO_EXIT_MODE ~= "" and vim.env.XYNO_EXIT_MODE or nil })
 local root, mode = vim.env.XYNO_ROOT, vim.env.XYNO_MODE
 if mode == "pending" then
   vim.cmd.edit(root .. "/f.txt")
@@ -1254,7 +1254,7 @@ local function child(root, mode, env)
   if not uv.fs_stat(script) then
     write(script, child_script)
   end
-  local e = vim.tbl_extend("force", { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_MODE = mode }, env or {})
+  local e = vim.tbl_extend("force", { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_MODE = mode, XYNO_EXIT_MODE = "sync" }, env or {})
   return vim.system(
     { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. script },
     { env = e, text = true }
@@ -1272,6 +1272,30 @@ describe("exit and concurrency (child nvim processes)", function()
     H.eq("final\n", blob(root, "refs/lochist/main", "f.txt"))
     H.eq(1, count(root, "refs/lochist/main"), "one synchronous snapshot")
     H.eq("autosave", subject(root, "refs/lochist/main"))
+  end)
+
+  it("exit_mode = background (the default): the same two cases, recorded by the detached worker after nvim is gone", function()
+    local root = mkrepo()
+    local r = child(root, "pending", { XYNO_EXIT_MODE = "" }):wait(30000)
+    H.eq(0, r.code, r.stderr)
+    H.wait_for(function()
+      return blob(root, "refs/lochist/main", "f.txt") == "final\n"
+    end, 20000, "the worker recorded the final content")
+    H.eq(1, count(root, "refs/lochist/main"), "one snapshot")
+    H.wait_for(function()
+      return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root })) == ""
+    end, 20000, "worker gone")
+
+    local root2 = mkrepo()
+    fake("commit-tree", "slowonce:3")
+    local r2 = child(root2, "inflight", { XYNO_EXIT_MODE = "" }):wait(30000)
+    H.eq(0, r2.code, r2.stderr)
+    H.wait_for(function()
+      return blob(root2, "refs/lochist/main", "f.txt") == "v1\n"
+    end, 20000, "the worker redid the in-flight snapshot")
+    H.wait_for(function()
+      return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root2 })) == ""
+    end, 20000, "worker gone")
   end)
 
   it("quitting with a snapshot in flight kills the running git and redoes it synchronously", function()

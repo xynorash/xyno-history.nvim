@@ -42,14 +42,15 @@ This plugin is independent and not affiliated with JetBrains.
 
 >lua
     require("xyno_history").setup({
-      commands = true,        -- register :LocalHistory, :LocalHistoryRestore, :LocalHistoryPrune
+      commands = true,        -- :LocalHistory, :LocalHistoryPanel, :LocalHistoryLabel, :LocalHistoryRestore, :LocalHistoryPrune
       keymaps = false,        -- false | true | { browse = lhs, restore = lhs, prune = lhs }
       max_bytes = nil,        -- per-file cap in bytes; nil = 10 MB; <= 0 = no cap
       max_total_bytes = nil,  -- budget of one snapshot; nil = 200 MB; <= 0 = none
       throttle_s = 60,        -- 0 .. 86400
       fail_backoff_s = 10,    -- 1 .. 3600
       full_scan_s = 300,      -- 0 .. 86400; 0 = walk the worktree on every snapshot
-      exit_budget_ms = 5000,  -- 0 .. 60000; 0 = no exit snapshot
+      exit_mode = "background", -- "background" | "sync" | "off"
+      exit_budget_ms = 5000,  -- 0 .. 60000; the sync wait (also the fallback of "background")
       list_limit = 100,       -- 1 .. 10000
       exclude = nil,          -- nil = default secrets list; list = replace; false = none
       exclude_extra = {},
@@ -62,16 +63,31 @@ This plugin is independent and not affiliated with JetBrains.
 commands          boolean, default true. Register the user commands.
 keymaps           false (default): no global keymap is set. true maps
                   `<leader>gH` to |:LocalHistory|. A table maps each of
-                  "browse", "restore" and "prune" to the left-hand side you
-                  give. See |xyno-history-keymaps|.
+                  "browse", "panel", "label", "restore" and "prune" to the
+                  left-hand side you give. See |xyno-history-keymaps|.
 max_bytes         Untracked or modified files bigger than this are left out
                   of a snapshot (one INFO notice per file). Default 10 MB.
 max_total_bytes   When the files that passed the per-file cap still add up to
                   more than this, the largest are left out until it fits.
                   Default 200 MB.
 
-throttle_s, fail_backoff_s, full_scan_s, exit_budget_ms, list_limit
-                  Validated numbers. A wrong type, an out-of-range value or
+throttle_s        0 .. 86400, default 60. Seconds between two snapshots of
+                  one repository; the last save of a window is never lost
+                  (a trailing snapshot).
+fail_backoff_s    1 .. 3600, default 10. Seconds before a failed snapshot is
+                  retried; if the retry fails too, one warning names the
+                  reason.
+full_scan_s       0 .. 86400, default 300. See below.
+exit_mode         "background" (default): quitting spawns a detached nvim
+                  that records the last save and exits, so `:q` does not wait
+                  for git. If it cannot be started the snapshot is taken
+                  before quitting, as "sync" does. "sync": quitting waits for
+                  the snapshot, at most exit_budget_ms. "off": none.
+exit_budget_ms    0 .. 60000, default 5000. The wait of the synchronous exit
+                  snapshot; 0 skips it (sync mode and the fallback).
+list_limit        1 .. 10000, default 100. Snapshots listed by the panel and
+                  |:LocalHistory|.
+                  These are validated: a wrong type, an out-of-range value or
                   an unknown key is reported in one warning by setup() and
                   the default is used.
 exclude           Gitignore-style names (no `!`, case-insensitive) left out
@@ -93,10 +109,55 @@ full_scan_s       Snapshots after the first walk the worktree only this
                   for the next full scan.
 
 setup() registers the autocommands (|BufWritePost|, `User AutoSaveWritePost`,
-|VimLeavePre|) in the group `xyno_history`. Calling it again replaces them.
+|VimLeavePre|, |ColorScheme|) in the group `xyno_history`. Calling it again
+replaces them.
+
+                                                        *xyno-history-highlights*
+Highlight groups, all default links to theme groups (set your own colour and
+it is kept; they are redefined after |:colorscheme|):
+  XynoHistoryTitle (Title)        XynoHistoryAge (Comment)
+  XynoHistoryLabel (Special)      XynoHistoryMatch (Search)
+  XynoHistoryAdded (DiagnosticOk) XynoHistoryModified (DiagnosticWarn)
+  XynoHistoryDeleted (DiagnosticError)  XynoHistoryRenamed (DiagnosticInfo)
+  XynoHistorySelected (CursorLine)      XynoHistoryHint (NonText)
+  XynoHistoryDiffAdd (DiffAdd)    XynoHistoryDiffDelete (DiffDelete)
+  XynoHistoryDiffHunk (DiffChange)
+  statusline: XynoHistoryOk (DiagnosticOk), XynoHistoryPending
+  (DiagnosticWarn), XynoHistoryFailing (DiagnosticError)
+
+                                                        *xyno-history-statusline*
+`require("xyno_history").statusline()` returns the text and the group for the
+current buffer's repository: "LH 2m" (age of the last snapshot), "LH ..." (one
+is being taken), "LH ~" (a save waits), "LH !" (snapshots are failing), or ""
+(no repository, nothing recorded yet). `statusline_hl()` returns the group.
 
 ==============================================================================
 4. COMMANDS                                                *xyno-history-commands*
+
+                                                           *:LocalHistoryPanel*
+:LocalHistoryPanel [file | project]
+                        Open the panel in a new tab: snapshots (time, label,
+                        number of files) at the top left, the files the
+                        selected snapshot changed below (A/M/D/R), a diff on
+                        the right. Keys: `q` close, `<Tab>` next pane, `/`
+                        search snapshots for a text (git's pickaxe: the text
+                        appeared or disappeared), `c` clear the search, `L`
+                        label, `d` toggle the diff between "snapshot vs
+                        current" (+ is what a revert brings back) and
+                        "snapshot vs previous", `s` toggle file/project scope,
+                        `r` revert the selected file (into its buffer, or onto
+                        the disk for a file that is not loaded or was
+                        deleted), `x` revert the hunk under the cursor of the
+                        preview, `<CR>` open the snapshot beside the current
+                        file in Neovim's diff mode, `gr` refresh, `y` yank the
+                        commit hash. Labelled snapshots that did not touch
+                        the file still appear in file scope.
+
+                                                           *:LocalHistoryLabel*
+:LocalHistoryLabel [text]
+                        Put a label on the current state of the repository: a
+                        snapshot is taken even when nothing changed. Asks for
+                        the text when none is given.
 
                                                                 *:LocalHistory*
 :LocalHistory           Pick a snapshot of the current file (newest first,
@@ -194,7 +255,9 @@ from the empty tree, so a hostile repository config cannot run code and
 snapshot per 60 seconds; a failed snapshot is retried once after 10 seconds. A
 git that hangs is killed after 30 seconds. If the retry fails too, one warning
 names the reason; |:checkhealth| xyno_history lists it. On exit, a pending or in-flight
-snapshot is taken synchronously within a 5 second budget.
+snapshot is recorded by a detached nvim (exit_mode "background"; the result
+is in `.git/lochist-exit.json` and in :checkhealth), or, with "sync" or when
+that cannot be started, before quitting within exit_budget_ms (5 s).
 
 ==============================================================================
 8. RECOVERING WITHOUT THE PLUGIN                           *xyno-history-recover*

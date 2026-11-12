@@ -15,8 +15,9 @@
 -- :LocalHistory.
 -- Saves inside the throttle window are not lost: one trailing snapshot is
 -- scheduled for the end of the window (and one more on exit if still pending
--- or still in flight: the running git is killed and the snapshot redone
--- synchronously, on the fast path when it can).
+-- or still in flight: the running git is killed and the snapshot redone, by default in a detached
+-- nvim that outlives this one (exit_mode "background"), else synchronously within exit_budget_ms,
+-- on the fast path when it can).
 -- Every nvim process uses its own index file (.git/lochist-index.<pid>), so
 -- concurrent instances never fight over one index.lock; leftovers of dead
 -- processes are cleaned up (the newest seeds the next one, so the first
@@ -123,7 +124,9 @@ local RETENTION_RANGES = { max_count = { 1, 1000000 }, max_age_days = { 1, 36500
 --- max_total_bytes: budget of a whole snapshot (nil: 200 MB; <= 0: none).
 --- throttle_s: seconds between two snapshots of a repo (0 .. 86400, default 60).
 --- fail_backoff_s: seconds before a failed snapshot may be retried (1 .. 3600, default 10).
---- exit_budget_ms: how long nvim may wait for the exit snapshot (0 .. 60000, default 5000).
+--- exit_budget_ms: how long nvim may wait for the exit snapshot when it takes it synchronously (0 .. 60000, default 5000).
+--- exit_mode: "background" (default: a detached nvim records the last save after this one quit; falls back to "sync"
+---   when it cannot be started), "sync" (quit waits, at most exit_budget_ms) or "off".
 --- full_scan_s: at most this often the worktree is walked (0: always, default 300).
 --- list_limit: snapshots listed by :LocalHistory (1 .. 10000, default 100).
 --- exclude: nil = M.default_exclude; a list replaces it; false/{} = exclude nothing.
@@ -138,6 +141,7 @@ M.config = {
   throttle_s = DEFAULTS.throttle_s,
   fail_backoff_s = DEFAULTS.fail_backoff_s,
   exit_budget_ms = DEFAULTS.exit_budget_ms,
+  exit_mode = "background",
   full_scan_s = DEFAULTS.full_scan_s,
   list_limit = DEFAULTS.list_limit,
   exclude = nil,
@@ -216,7 +220,7 @@ local function validate(opts)
     commands = "boolean", keymaps = "boolean|table", max_bytes = "number", max_total_bytes = "number",
     throttle_s = "number", fail_backoff_s = "number", exit_budget_ms = "number", full_scan_s = "number",
     list_limit = "number", exclude = "boolean|table", exclude_extra = "table", push_guard = "boolean",
-    retention = "boolean|table",
+    retention = "boolean|table", exit_mode = "string",
   }
   for k, v in pairs(opts) do
     local want = known[k]
@@ -226,6 +230,8 @@ local function validate(opts)
       bad(("%s must be a %s, got %s (default kept)"):format(k, want:gsub("|", " or "), type(v)))
     elseif RANGES[k] and not is_int_in(v, RANGES[k]) then
       bad(("%s must be a number between %d and %d, got %s (default %s kept)"):format(k, RANGES[k][1], RANGES[k][2], tostring(v), tostring(DEFAULTS[k])))
+    elseif k == "exit_mode" and not vim.tbl_contains({ "background", "sync", "off" }, v) then
+      bad(('exit_mode must be "background", "sync" or "off", got %q (default kept)'):format(tostring(v)))
     elseif k == "exclude" and v == true then
       bad("exclude must be a list of patterns, false or nil, got true (default list kept)")
     elseif k == "exclude" or k == "exclude_extra" then
@@ -957,7 +963,7 @@ local function commit_tree(root, build, env, opts, g, finish)
               return commit()
             end
             g({ "rev-parse", parent .. "^{tree}" }, env, function(prev_tree)
-              if prev_tree == tree then
+              if prev_tree == tree and not opts.mark then
                 finish(nil, true) -- nothing changed since the last snapshot
               else
                 commit()
@@ -1372,6 +1378,26 @@ function M._decode(content, buf)
   return lines, meta
 end
 
+--- Put a label on the current state of the repository of the current buffer: a snapshot that is taken
+--- even when nothing changed since the last one, and shows up with the label in the panel.
+--- @param text? string asked for when empty
+--- @param cb? fun(commit: string?)
+function M.label(text, cb)
+  local path = vim.api.nvim_buf_get_name(0)
+  local function go(label)
+    label = vim.trim((label or ""):gsub("%s+", " "))
+    if label == "" then
+      return
+    end
+    M.snapshot({ path = path, force = true, label = label, mark = true, done = cb })
+  end
+  if text and vim.trim(text) ~= "" then
+    go(text)
+  else
+    vim.ui.input({ prompt = "Local history label: " }, go)
+  end
+end
+
 --- Pick an earlier snapshot of the current file and diff against it.
 function M.browse()
   local buf = vim.api.nvim_get_current_buf()
@@ -1584,7 +1610,90 @@ function M.status()
   for root in pairs(indexes) do
     row(root)
   end
+  for root in pairs(running) do
+    row(root).running = true
+  end
+  for root in pairs(pending) do
+    row(root).pending = true
+  end
   return out
+end
+
+--- Snapshot refs of `root` (the current branch's, and the legacy ones that still exist), via cb(refs).
+--- @param root string
+--- @param cb fun(refs: string[])
+function M._refs(root, cb)
+  migrate(root, function()
+    ref_for(root, function(ref, legacy)
+      existing(root, { ref, legacy }, cb)
+    end)
+  end)
+end
+
+M._git = function(args, root, cb, raw)
+  git(args, root, nil, cb, raw)
+end
+
+--- Statusline text for the current buffer's repository: "LH 2m" (age of the last snapshot), "LH ..." (one is
+--- being taken), "LH ~" (a save waits for its snapshot), "LH !" (snapshots are failing) or "" (not in a
+--- repository, nothing recorded yet this session). Cheap: no disk access beyond the first call per buffer.
+--- @param buf? integer
+--- @return string, string? text and highlight group
+function M.statusline(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  local root = vim.b[buf].xyno_history_root
+  if root == nil then
+    local name = vim.api.nvim_buf_get_name(buf)
+    root = name ~= "" and vim.bo[buf].buftype == "" and vim.fs.root(name, ".git") or false
+    vim.b[buf].xyno_history_root = root
+  end
+  if not root then
+    return "", nil
+  end
+  if failures[root] then
+    return "LH !", "XynoHistoryFailing"
+  elseif running[root] then
+    return "LH ...", "XynoHistoryPending"
+  elseif pending[root] then
+    return "LH ~", "XynoHistoryPending"
+  elseif last[root] then
+    local d = os.time() - last[root]
+    local age = d < 90 and "now" or d < 5400 and (math.floor(d / 60 + 0.5) .. "m") or d < 129600 and (math.floor(d / 3600 + 0.5) .. "h") or (math.floor(d / 86400 + 0.5) .. "d")
+    return "LH " .. age, "XynoHistoryOk"
+  end
+  return "", nil
+end
+
+function M.statusline_hl(buf)
+  local _, hl = M.statusline(buf)
+  return hl
+end
+
+local HL_LINKS = {
+  XynoHistoryTitle = "Title",
+  XynoHistoryAge = "Comment",
+  XynoHistoryLabel = "Special",
+  XynoHistoryMatch = "Search",
+  XynoHistoryAdded = "DiagnosticOk",
+  XynoHistoryModified = "DiagnosticWarn",
+  XynoHistoryDeleted = "DiagnosticError",
+  XynoHistoryRenamed = "DiagnosticInfo",
+  XynoHistorySelected = "CursorLine",
+  XynoHistoryHint = "NonText",
+  XynoHistoryDiffAdd = "DiffAdd",
+  XynoHistoryDiffDelete = "DiffDelete",
+  XynoHistoryDiffHunk = "DiffChange",
+  XynoHistoryOk = "DiagnosticOk",
+  XynoHistoryPending = "DiagnosticWarn",
+  XynoHistoryFailing = "DiagnosticError",
+}
+M.highlight_groups = vim.tbl_keys(HL_LINKS)
+
+--- (Re)define the XynoHistory* groups as default links to theme groups; a colour you set yourself wins.
+function M._define_highlights()
+  for group, target in pairs(HL_LINKS) do
+    vim.api.nvim_set_hl(0, group, { link = target, default = true })
+  end
 end
 
 --- The patterns that apply (defaults, or yours, plus exclude_extra).
@@ -1595,7 +1704,82 @@ end
 M._guard_script = GUARD
 M._install_push_guard = install_push_guard
 
---- @param opts? { commands?: boolean, keymaps?: boolean|table<string,string>, max_bytes?: number, max_total_bytes?: number, throttle_s?: number, fail_backoff_s?: number, exit_budget_ms?: number, full_scan_s?: number, list_limit?: number, exclude?: string[]|false, exclude_extra?: string[], push_guard?: boolean, retention?: table|boolean }
+-- ------------------------------------------------------------ exit snapshot
+
+local WORKER = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)) .. "/exit_worker.lua"
+
+--- Hand the exit snapshot of `targets` (roots) to a detached nvim that outlives this one, so quitting
+--- does not wait for git. Returns true when every worker was started; false means "do it here".
+local function spawn_exit_workers(targets)
+  if vim.fn.executable(vim.v.progpath) ~= 1 or not vim.uv.fs_stat(WORKER) then
+    return false
+  end
+  local cfg = {}
+  for k, v in pairs(M.config) do
+    if type(v) ~= "function" and type(v) ~= "userdata" then
+      cfg[k] = v
+    end
+  end
+  for _, root in ipairs(targets) do
+    local gitdir = gitdirs[root] or (vim.uv.fs_stat(root .. "/.git") and root .. "/.git")
+    local st = gitdir and vim.uv.fs_stat(gitdir)
+    if not (st and st.type == "directory") then
+      return false -- a worktree with a .git file: let the synchronous path sort it out
+    end
+    local paths = {}
+    for rel in pairs(touched[root] or {}) do
+      paths[#paths + 1] = rel
+    end
+    local file = ("%s/lochist-exit-%d.json"):format(gitdir, vim.uv.os_getpid())
+    local ok_enc, json = pcall(vim.json.encode, { parent = vim.uv.os_getpid(), root = root, gitdir = gitdir, config = cfg, touched = paths, fullscan = fullscan[root] })
+    local f = ok_enc and io.open(file, "wb")
+    if not f then
+      return false
+    end
+    f:write(json)
+    f:close()
+    local handle = vim.uv.spawn(vim.v.progpath, {
+      args = { "--headless", "-u", "NONE", "-i", "NONE", "-n", "-l", WORKER, file },
+      cwd = root,
+      detached = true,
+      stdio = { nil, nil, nil },
+    }, function() end)
+    if not handle then
+      os.remove(file)
+      return false
+    end
+    vim.uv.unref(handle)
+  end
+  return true
+end
+
+--- Used by exit_worker.lua: take over what the quitting session knew (saved paths, last full scan).
+--- @param root string
+--- @param rec { touched: string[], fullscan: number? }
+function M._exit_import(root, rec)
+  local t = {}
+  for _, rel in ipairs(rec.touched or {}) do
+    t[rel] = true
+  end
+  touched[root] = t
+  fullscan[root] = rec.fullscan
+end
+
+--- Result of the last exit snapshot of `root` (written by the worker): { time, ok, reason? } or nil.
+--- @param root string
+function M.last_exit(root)
+  local gitdir = gitdirs[root] or (root .. "/.git")
+  local f = io.open(gitdir .. "/lochist-exit.json", "rb")
+  if not f then
+    return nil
+  end
+  local text = f:read("*a")
+  f:close()
+  local ok, t = pcall(vim.json.decode, text)
+  return ok and type(t) == "table" and t or nil
+end
+
+--- @param opts? { commands?: boolean, keymaps?: boolean|table<string,string>, max_bytes?: number, max_total_bytes?: number, throttle_s?: number, fail_backoff_s?: number, exit_budget_ms?: number, exit_mode?: string, full_scan_s?: number, list_limit?: number, exclude?: string[]|false, exclude_extra?: string[], push_guard?: boolean, retention?: table|boolean }
 function M.setup(opts)
   local clean, problems = validate(opts or {})
   for _, list in ipairs({ clean.exclude or {}, clean.exclude_extra or {} }) do
@@ -1615,6 +1799,8 @@ function M.setup(opts)
     hardened[k] = nil -- ... and the ignore file is written again
   end
   local group = vim.api.nvim_create_augroup("xyno_history", { clear = true })
+  M._define_highlights()
+  vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = M._define_highlights })
   vim.api.nvim_create_autocmd("User", {
     group = group,
     pattern = "AutoSaveWritePost",
@@ -1642,16 +1828,28 @@ function M.setup(opts)
       for _, root in ipairs(vim.tbl_keys(timers)) do
         stop_timer(root)
       end
+      local mode = M.config.exit_mode
       local budget = num("exit_budget_ms")
-      deadline = vim.uv.hrtime() / 1e6 + budget
       local roots = vim.deepcopy(pending)
       for root in pairs(runs) do
         roots[root] = true
       end
+      local targets = {}
       for root in pairs(roots) do
         abort(root, true)
         running[root] = nil
-        if budget > 0 and vim.uv.fs_stat(root .. "/.git") then
+        if mode ~= "off" and vim.uv.fs_stat(root .. "/.git") then
+          targets[#targets + 1] = root
+        end
+      end
+      if #targets > 0 and mode == "background" and spawn_exit_workers(targets) then
+        pending = {}
+        return
+      end
+      -- "sync", or the worker could not be started: record it here, bounded by exit_budget_ms
+      deadline = vim.uv.hrtime() / 1e6 + budget
+      for _, root in ipairs(targets) do
+        if budget > 0 then
           pcall(M.snapshot, { path = root, force = true, fast = true })
         end
       end
@@ -1661,6 +1859,18 @@ function M.setup(opts)
   })
   if M.config.commands then
     vim.api.nvim_create_user_command("LocalHistory", M.browse, { desc = "Browse local history of this file" })
+    vim.api.nvim_create_user_command("LocalHistoryPanel", function(c)
+      require("xyno_history.panel").open({ scope = c.args == "project" and "project" or "file" })
+    end, {
+      nargs = "?",
+      complete = function()
+        return { "file", "project" }
+      end,
+      desc = "Local history panel: snapshots, changed files, diff preview, revert, labels, content search",
+    })
+    vim.api.nvim_create_user_command("LocalHistoryLabel", function(c)
+      M.label(c.args)
+    end, { nargs = "?", desc = "Put a label on the current state of the repository (a snapshot even if nothing changed)" })
     vim.api.nvim_create_user_command("LocalHistoryPrune", function(c)
       M.prune(c.args, c.bang)
     end, { nargs = "?", bang = true, desc = "Drop old local-history snapshots: [N] newest per branch or [N]d days (default 30d)" })
@@ -1672,9 +1882,9 @@ function M.setup(opts)
   end
   local km = M.config.keymaps
   if km then
-    -- true: <leader>gH browses; a table maps action ("browse", "restore", "prune") to a lhs
+    -- true: <leader>gH browses; a table maps action ("browse", "panel", "label", "restore", "prune") to a lhs
     local maps = km == true and { browse = "<leader>gH" } or km
-    local rhs = { browse = "<cmd>LocalHistory<cr>", restore = "<cmd>LocalHistoryRestore<cr>", prune = "<cmd>LocalHistoryPrune<cr>" }
+    local rhs = { panel = "<cmd>LocalHistoryPanel<cr>", label = "<cmd>LocalHistoryLabel<cr>", browse = "<cmd>LocalHistory<cr>", restore = "<cmd>LocalHistoryRestore<cr>", prune = "<cmd>LocalHistoryPrune<cr>" }
     for action, lhs in pairs(maps) do
       if rhs[action] and lhs then
         vim.keymap.set("n", lhs, rhs[action], { desc = "Local history: " .. action })

@@ -207,7 +207,7 @@ end)
 local child_script = [[
 package.path = vim.env.XYNO_REPO .. "/lua/?.lua;" .. vim.env.XYNO_REPO .. "/lua/?/init.lua;" .. package.path
 local LH = require("xyno_history")
-LH.setup({ retention = false })
+LH.setup({ retention = false, exit_mode = vim.env.XYNO_EXIT_MODE })
 local root = vim.env.XYNO_ROOT
 vim.cmd.edit(root .. "/f.txt")
 vim.api.nvim_buf_set_lines(0, 0, -1, false, { "v1" })
@@ -220,14 +220,14 @@ vim.cmd("qa!")
 ]]
 
 describe("exit", function()
-  it("the exit snapshot after a recent full scan takes the fast path and records the final content", function()
+  it("exit_mode = sync: the exit snapshot after a recent full scan takes the fast path and records the final content", function()
     local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
     K.write(base .. "/child.lua", child_script)
     K.clear_log()
     local t0 = uv.hrtime()
     local r = vim.system(
       { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. base .. "/child.lua" },
-      { env = { XYNO_REPO = H.repo, XYNO_ROOT = root }, text = true }
+      { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "sync" }, text = true }
     ):wait(60000)
     H.eq(0, r.code, r.stderr)
     H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
@@ -252,5 +252,114 @@ describe("exit", function()
     LH.config.exit_budget_ms = 5000
     H.not_ok(fired)
     K.state(LH, "pending")[root] = nil
+  end)
+end)
+
+describe("exit, background worker", function()
+  local function ncommits(root)
+    local ok, n = pcall(K.count_commits, root, "refs/lochist/main")
+    return ok and n or 0
+  end
+  local function workers(root) -- only this test's workers: their handoff file is in the test repo
+    return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root }))
+  end
+
+  it("quitting hands the last save to a detached nvim: the final content is recorded after the editor is gone", function()
+    local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
+    K.write(base .. "/child.lua", child_script)
+    K.clear_log()
+    local r = vim.system(
+      { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. base .. "/child.lua" },
+      { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "background" }, text = true }
+    ):wait(60000)
+    H.eq(0, r.code, r.stderr)
+    H.wait_for(function()
+      return K.count_commits(root, "refs/lochist/main") == 2
+    end, 20000, "the worker's snapshot")
+    H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
+    H.eq(1, K.count("^ls%-files %-o"), "the worker took the fast path: no second walk of the worktree")
+    H.wait_for(function()
+      return workers(root) == ""
+    end, 20000, "the worker exits by itself")
+    local res = LH.last_exit(root)
+    H.ok(res and res.ok, "result file: " .. vim.inspect(res))
+    H.eq({}, vim.fn.glob(root .. "/.git/lochist-exit-*.json", true, true), "handoff file removed")
+  end)
+
+  it("the worker is started detached with a handoff file; nothing is snapshotted in the quitting nvim", function()
+    local root = K.mkrepo({ ["f.txt"] = "0\n" })
+    local spawned
+    local real = vim.uv.spawn
+    vim.uv.spawn = function(cmd, opts, cb)
+      if cmd ~= vim.v.progpath then
+        return real(cmd, opts, cb)
+      end
+      spawned = { cmd = cmd, opts = opts }
+      return real("true", { args = {} }, cb)
+    end
+    K.clear_log()
+    K.state(LH, "pending")[root] = true
+    vim.api.nvim_exec_autocmds("VimLeavePre", { group = "xyno_history" })
+    vim.uv.spawn = real
+    H.ok(spawned, "spawn called")
+    H.eq(true, spawned.opts.detached)
+    H.eq(vim.v.progpath, spawned.cmd)
+    H.match(spawned.opts.args[#spawned.opts.args - 1], "exit_worker.lua", true)
+    local file = spawned.opts.args[#spawned.opts.args]
+    local h = vim.json.decode(K.read(file))
+    H.eq(root, h.root)
+    H.eq(vim.uv.os_getpid(), h.parent)
+    H.eq("off", h.config.exit_mode == "background" and "off" or "x")
+    H.eq(0, K.count("^add"), "no git add here")
+    os.remove(file)
+    K.state(LH, "pending")[root] = nil
+  end)
+
+  it("falls back to the bounded synchronous snapshot when the worker cannot be started", function()
+    local root = K.mkrepo({ ["f.txt"] = "0\n" })
+    K.write(root .. "/f.txt", "changed\n")
+    local real = vim.uv.spawn
+    vim.uv.spawn = function(cmd, ...)
+      if cmd == vim.v.progpath then
+        return nil -- the worker cannot be started (git, started through vim.system, still can)
+      end
+      return real(cmd, ...)
+    end
+    K.state(LH, "pending")[root] = true
+    vim.api.nvim_exec_autocmds("VimLeavePre", { group = "xyno_history" })
+    vim.uv.spawn = real
+    H.eq(1, ncommits(root), "recorded before VimLeavePre returned")
+    H.eq("changed\n", K.blob(root, "refs/lochist/main", "f.txt"))
+    H.eq({}, vim.fn.glob(root .. "/.git/lochist-exit-*.json", true, true), "stale handoff file removed")
+  end)
+
+  it('exit_mode = "off" takes no exit snapshot at all', function()
+    LH.config.exit_mode = "off"
+    local root = K.mkrepo()
+    local fired = false
+    local real = vim.uv.spawn
+    vim.uv.spawn = function(cmd, ...)
+      fired = fired or cmd == vim.v.progpath
+      return real(cmd, ...)
+    end
+    K.state(LH, "pending")[root] = true
+    vim.api.nvim_exec_autocmds("VimLeavePre", { group = "xyno_history" })
+    vim.uv.spawn = real
+    LH.config.exit_mode = "background"
+    H.not_ok(fired)
+    H.eq(0, ncommits(root))
+    K.state(LH, "pending")[root] = nil
+  end)
+
+  it("exit_mode is validated", function()
+    local cap = {}
+    local orig = vim.notify
+    vim.notify = function(m)
+      cap[#cap + 1] = m
+    end
+    LH.setup({ exit_mode = "later" })
+    vim.notify = orig
+    H.match(cap[1], 'exit_mode must be "background", "sync" or "off"', true)
+    H.eq("background", LH.config.exit_mode)
   end)
 end)

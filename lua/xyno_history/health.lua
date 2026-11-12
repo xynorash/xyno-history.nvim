@@ -43,6 +43,19 @@ local function check_repo(h, lh, root)
     end
   end
 
+  local ex = lh.last_exit(root)
+  if ex then
+    if ex.ok then
+      h.ok("the last exit snapshot (taken by the background worker) succeeded " .. ago(ex.time or 0))
+    else
+      h.warn(("the last exit snapshot failed %s: %s"):format(ago(ex.time or 0), ex.reason or "unknown"), { "The save it owed is picked up by the next full scan; run the failing git command by hand to see the cause." })
+    end
+  end
+  local leftovers = vim.fn.glob(root .. "/.git/lochist-exit-*.json", true, true)
+  if #leftovers > 0 then
+    h.info(#leftovers .. " exit handoff file(s) in .git: a background worker is running or was killed (they are harmless)")
+  end
+
   local refs = git(root, { "for-each-ref", "--format=%(refname) %(committerdate:unix) %(objectname)", "refs/lochist" })
   if refs and refs ~= "" then
     local n, newest = 0, 0
@@ -142,6 +155,12 @@ function M.check()
   h.info(
     ("throttle_s=%s fail_backoff_s=%s full_scan_s=%s exit_budget_ms=%s list_limit=%s"):format(c.throttle_s, c.fail_backoff_s, c.full_scan_s, c.exit_budget_ms, c.list_limit)
   )
+  h.info(("exit_mode = %s (%s)"):format(c.exit_mode, c.exit_mode == "background" and "a detached nvim records the last save after quitting; falls back to waiting up to exit_budget_ms" or c.exit_mode == "sync" and "quitting waits for the snapshot, at most exit_budget_ms" or "no exit snapshot"))
+  for _, grp in ipairs(lh.highlight_groups) do
+    if next(vim.api.nvim_get_hl(0, { name = grp, link = true })) == nil then
+      h.warn("highlight group " .. grp .. " is not defined", { "setup() defines them; a :hi clear without a ColorScheme event removed it" })
+    end
+  end
   local pats = lh.exclude_patterns()
   if #pats == 0 then
     h.warn("the secrets exclude list is empty: every untracked file that .gitignore does not cover goes into the snapshots", { "remove `exclude = false` / `exclude = {}` from your setup()" })
