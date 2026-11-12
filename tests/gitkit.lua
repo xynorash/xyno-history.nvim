@@ -48,6 +48,7 @@ exec "%s" "$@"
   vim.env.PATH = base .. "/bin:" .. vim.env.PATH
   vim.env.GIT_CONFIG_GLOBAL = base .. "/gitconfig"
   vim.env.GIT_CONFIG_NOSYSTEM = "1"
+  vim.env.XDG_STATE_HOME = base .. "/state"
   H._restore[#H._restore + 1] = function()
     for k, v in pairs(saved) do
       vim.env[k] = v

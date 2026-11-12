@@ -279,42 +279,67 @@ local function patterns()
   return list
 end
 
---- Glob pathspecs (without magic) for one gitignore-like pattern; nil + reason for an unsupported one.
-local function pattern_globs(p)
+--- One gitignore line per pattern, case-insensitive (every letter becomes [xX]); nil + reason for a pattern
+--- that cannot be used. Patterns with "[" or "\\" are passed through as they are (case-sensitive).
+local function pattern_line(p)
   p = vim.trim(type(p) == "string" and p or "")
   if p == "" or p:sub(1, 1) == "#" then
-    return {}
+    return nil
   end
   if p:sub(1, 1) == "!" then
     return nil, "negation is not supported"
   end
-  local dir = p:sub(-1) == "/"
-  p = p:gsub("/+$", "")
-  if p == "" then
+  if p:gsub("/+$", ""):gsub("^/+", "") == "" then
     return nil, "empty pattern"
   end
-  local anchored = p:find("/", 1, true) ~= nil
-  p = p:gsub("^/+", "")
-  local base = anchored and p or ("**/" .. p)
-  if dir then
-    return { base .. "/**" }
+  if p:find("[", 1, true) or p:find("\\", 1, true) then
+    return p
   end
-  return { base, base .. "/**" }
+  return (p:gsub("%a", function(c)
+    return "[" .. c:lower() .. c:upper() .. "]"
+  end))
 end
 
---- The pathspecs of the exclude list: positive ones (for git rm --cached) and :(exclude) ones (git add).
-local function exclude_specs()
-  local pos, neg, seen = {}, {}, {}
+--- Write (once per content) the ignore file the snapshots use: the user's global ignore file followed by
+--- the exclude patterns. Git's own ignore matching is fast (name and suffix patterns are hashed), unlike
+--- 100 `:(exclude)` pathspecs, which cost over a second per scan of a 100k-file tree.
+--- Returns the path, or nil + reason.
+local function write_excludes_file(user_path)
+  local lines = { "# xyno-history: generated, do not edit" }
+  local f = user_path and io.open(user_path, "rb")
+  if f then
+    local text = f:read(1048576) or ""
+    f:close()
+    lines[#lines + 1] = "# --- " .. user_path
+    lines[#lines + 1] = text
+  end
+  lines[#lines + 1] = "# --- exclude patterns of xyno-history"
   for _, p in ipairs(patterns()) do
-    for _, g in ipairs(pattern_globs(p) or {}) do
-      if not seen[g] then
-        seen[g] = true
-        pos[#pos + 1] = ":(glob,icase)" .. g
-        neg[#neg + 1] = ":(exclude,glob,icase)" .. g
-      end
+    local l = pattern_line(p)
+    if l then
+      lines[#lines + 1] = l
     end
   end
-  return pos, neg
+  local content = table.concat(lines, "\n") .. "\n"
+  local dir = vim.fn.stdpath("state") .. "/xyno-history"
+  local path = dir .. "/excludes-" .. vim.fn.sha256(content):sub(1, 16)
+  if vim.uv.fs_stat(path) then
+    return path
+  end
+  vim.fn.mkdir(dir, "p")
+  local tmp = path .. "." .. vim.uv.os_getpid() .. ".tmp"
+  local w = io.open(tmp, "wb")
+  if not w then
+    return nil, "cannot write " .. dir
+  end
+  w:write(content)
+  w:close()
+  local ok, err = os.rename(tmp, path)
+  if not ok then
+    os.remove(tmp)
+    return nil, "cannot write " .. path .. ": " .. tostring(err)
+  end
+  return path
 end
 
 -- ------------------------------------------------------------------ git calls
@@ -373,10 +398,10 @@ end
 
 --- `run` (optional) lets a caller abandon the chain: once run.dead is set the
 --- callback never fires, and run.child is the git process to kill.
-local function git(args, root, env, cb, raw, run)
+local function git(args, root, env, cb, raw, run, stdin)
   local cmd = vim.list_extend({ "git" }, args)
   -- text = true would turn CRLF into LF in stdout: raw reads (file contents, -z lists) must stay byte exact
-  local sysopts = { cwd = root, env = M.git_env(root, env), text = not raw }
+  local sysopts = { cwd = root, env = M.git_env(root, env), text = not raw, stdin = stdin }
   local function done(o)
     cb(o.code == 0 and (raw and (o.stdout or "") or vim.trim(o.stdout or "")) or nil, o)
   end
@@ -671,13 +696,29 @@ local function prepare(root, gitdir, exclude)
   end
 end
 
+--- Where the user's own global ignore file is (core.excludesFile of the user's config, else git's default).
+local function user_excludes_path(cb, root, run)
+  git({ "config", "--global", "--type=path", "--get", "core.excludesFile" }, root, nil, function(p)
+    if p and p ~= "" then
+      return cb(p)
+    end
+    local home = vim.env.XDG_CONFIG_HOME
+    if not home or home == "" then
+      home = (vim.env.HOME or "") .. "/.config"
+    end
+    cb(home .. "/git/ignore")
+  end, false, run)
+end
+
 --- Once per repo and session: learn the filter/diff driver names of the repository config (their
 --- commands are replaced by `cat` / nothing, on top of the attribute source below) and the id of the
 --- empty tree of this repository's hash algorithm (attributes are read from it).
 local function harden(root, run, cb)
-  if hardened[root] then
+  local sig = vim.fn.sha256(table.concat(patterns(), "\0"))
+  if hardened[root] and hardened[root].sig == sig then
     return cb()
   end
+  purged[root] = nil -- a new exclude list: look for stale index entries again
   git(
     { "config", "--name-only", "--null", "--get-regexp", [[^(filter|diff|merge|mergetool|difftool)\..*\.(clean|smudge|process|textconv|command|driver|cmd)$]] },
     root,
@@ -697,8 +738,14 @@ local function harden(root, run, cb)
         end
       end
       git({ "hash-object", "-t", "tree", "/dev/null" }, root, nil, function(empty)
-        hardened[root] = { pairs = extra, empty_tree = empty and empty:match("^%x+$") or nil }
-        cb()
+        user_excludes_path(function(user_path)
+          local file, err = write_excludes_file(user_path)
+          if file then
+            extra[#extra + 1] = { "core.excludesFile", file }
+          end
+          hardened[root] = { sig = sig, pairs = extra, empty_tree = empty and empty:match("^%x+$") or nil, excludes = file, excludes_err = err }
+          cb()
+        end, root, run)
       end, false, run)
     end,
     false,
@@ -1046,8 +1093,8 @@ function M.snapshot(opts)
       maybe_auto_prune(root)
     end
   end
-  local function g(args, env, cb, raw)
-    git(args, root, env, cb, raw, run)
+  local function g(args, env, cb, raw, stdin)
+    git(args, root, env, cb, raw, run, stdin)
   end
 
   -- A hung git must not disable history for this repo until restart: kill it.
@@ -1084,6 +1131,12 @@ function M.snapshot(opts)
       GIT_COMMITTER_EMAIL = "lochist@xyno-history",
     }
     harden(root, run, function()
+      if not hardened[root].excludes then
+        -- fail closed: without the ignore file the secrets would not be left out
+        local err = hardened[root].excludes_err or "no exclude file"
+        hardened[root] = nil
+        return finish(nil, false, "cannot prepare the secrets exclude list: " .. err)
+      end
       local have_index = vim.uv.fs_stat(index) ~= nil
       local mode = "initial"
       if fullscan[root] and have_index and not opts.full then
@@ -1106,12 +1159,10 @@ function M.snapshot(opts)
             return finish(nil, false, "scanning the worktree failed")
           end
           scanned_full = m ~= "fast"
-          local pos, neg = exclude_specs()
           local excl = {}
           for _, rel in ipairs(big) do
             excl[#excl + 1] = ":(exclude,literal)" .. rel
           end
-          vim.list_extend(excl, neg)
           local add = { "add", "-A", "--ignore-errors", "--" }
           if m == "fast" then
             if #changed == 0 then
@@ -1162,25 +1213,41 @@ function M.snapshot(opts)
           -- entries that an older snapshot (or an older version of the exclude list) put into the
           -- index but that must stay out now: excluded names, and files that outgrew the cap
           local drop = {}
-          local fresh_drop = false
           for _, rel in ipairs(big) do
             removed_big[root] = removed_big[root] or {}
             if not removed_big[root][rel] then
               removed_big[root][rel] = true
-              fresh_drop = true
+              drop[#drop + 1] = ":(literal)" .. rel
             end
-            drop[#drop + 1] = ":(literal)" .. rel
           end
-          if not purged[root] then
+          local function purge_big()
+            if #drop > 0 and vim.uv.fs_stat(index) then
+              local rm = { "rm", "--cached", "-r", "-q", "-f", "--ignore-unmatch", "--" }
+              g(vim.list_extend(rm, drop), env, go)
+            else
+              go()
+            end
+          end
+          if not purged[root] and have_index then
             purged[root] = true
-            vim.list_extend(drop, pos)
-            fresh_drop = fresh_drop or (#pos > 0 and have_index)
-          end
-          if fresh_drop and #drop > 0 and vim.uv.fs_stat(index) then
-            local rm = { "rm", "--cached", "-r", "-q", "-f", "--ignore-unmatch", "--" }
-            g(vim.list_extend(rm, drop), env, go)
+            -- index entries that match the exclude patterns (an older version, an older list)
+            g({ "ls-files", "-c", "-i", "-z", "--exclude-from=" .. (hardened[root].excludes or "/dev/null") }, env, function(list, lo)
+              if not list and lo.code ~= 0 then
+                return finish(nil, false, why("git ls-files", lo))
+              end
+              if (list or "") == "" or not hardened[root].excludes then
+                return purge_big()
+              end
+              g({ "rm", "--cached", "-q", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul" }, vim.tbl_extend("force", env, { GIT_LITERAL_PATHSPECS = "1" }), function(_, ro)
+                if ro.code ~= 0 then
+                  return finish(nil, false, why("git rm --cached", ro))
+                end
+                purge_big()
+              end, false, list)
+            end, true)
           else
-            go()
+            purged[root] = true
+            purge_big()
           end
         end)
       end
@@ -1533,7 +1600,7 @@ function M.setup(opts)
   local clean, problems = validate(opts or {})
   for _, list in ipairs({ clean.exclude or {}, clean.exclude_extra or {} }) do
     for _, pat in ipairs(type(list) == "table" and list or {}) do
-      local _, bad = pattern_globs(pat)
+      local _, bad = pattern_line(pat)
       if bad then
         problems[#problems + 1] = ("exclude pattern %q ignored: %s"):format(pat, bad)
       end
@@ -1544,6 +1611,9 @@ function M.setup(opts)
   end
   M.config = vim.tbl_extend("force", M.config, clean)
   purged = {} -- the exclude list may have changed: clean the index again
+  for k in pairs(hardened) do
+    hardened[k] = nil -- ... and the ignore file is written again
+  end
   local group = vim.api.nvim_create_augroup("xyno_history", { clear = true })
   vim.api.nvim_create_autocmd("User", {
     group = group,
