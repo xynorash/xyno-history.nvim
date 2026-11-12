@@ -42,7 +42,13 @@ local function chain(root, ref, items)
   local s = {}
   for i, it in ipairs(items) do
     local msg = it.msg or ("snap" .. i)
-    s[#s + 1] = ("commit %s\nmark :%d\ncommitter xyno-history <lochist@xyno-history> %d +0000\ndata %d\n%s\n"):format(ref, i, now - (it.days or 0) * 86400, #msg, msg)
+    s[#s + 1] = ("commit %s\nmark :%d\ncommitter xyno-history <lochist@xyno-history> %d +0000\ndata %d\n%s\n"):format(
+      ref,
+      i,
+      now - (it.days or 0) * 86400,
+      #msg,
+      msg
+    )
     if i > 1 then
       s[#s + 1] = ("from :%d\n"):format(i - 1)
     end

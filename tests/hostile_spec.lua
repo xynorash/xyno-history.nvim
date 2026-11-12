@@ -129,7 +129,17 @@ describe("hostile repository configuration", function()
       local r = vim.system({ K.REAL_GIT, "config", "--get", key }, { cwd = root, text = true, env = env }):wait()
       return vim.trim(r.stdout or "")
     end
-    for _, key in ipairs({ "core.sshCommand", "core.gitProxy", "core.editor", "core.askPass", "core.fsmonitor", "core.alternateRefsCommand", "credential.helper", "diff.external", "gpg.program" }) do
+    for _, key in ipairs({
+      "core.sshCommand",
+      "core.gitProxy",
+      "core.editor",
+      "core.askPass",
+      "core.fsmonitor",
+      "core.alternateRefsCommand",
+      "credential.helper",
+      "diff.external",
+      "gpg.program",
+    }) do
       local v = get(key)
       H.no_match(v, "never", true, key .. " = " .. v)
     end

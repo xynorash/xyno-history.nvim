@@ -53,7 +53,9 @@ LH.snapshot({
   fast = true,
   done = function(commit)
     local st = LH.status()[h.root] or {}
-    local reason = st.failing and st.failing.reason or (st.last_failure and st.last_failure.time >= os.time() - 1 and st.last_failure.reason) or nil
+    local reason = st.failing and st.failing.reason
+      or (st.last_failure and st.last_failure.time >= os.time() - 1 and st.last_failure.reason)
+      or nil
     report({ ok = reason == nil, commit = commit, reason = reason })
     finished = true
   end,

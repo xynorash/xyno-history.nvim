@@ -134,9 +134,13 @@ describe("rename tracking", function()
     end
     open_file(root, "a.txt")
     LH.config.list_limit = 4
-    mock_select(function() return nil end)
+    mock_select(function()
+      return nil
+    end)
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #sel_calls > 0 end, 15000, "picker")
+    H.wait_for(function()
+      return #sel_calls > 0
+    end, 15000, "picker")
     H.eq(4, #sel_calls[1].items)
   end)
 end)
@@ -245,13 +249,16 @@ describe("restore fidelity", function()
     H.eq("a\r\nb\r\n", K.blob(root, c, "mixed.txt"))
   end)
 
-  it("a snapshot that cannot be converted is not restored (an unknown fileencoding is an error, not garbage)", function()
-    local b = vim.api.nvim_create_buf(false, true)
-    vim.bo[b].fileencoding = "no-such-encoding"
-    local lines, err = LH._decode("abc\n", b)
-    H.is_nil(lines)
-    H.match(err, "cannot convert", true)
-  end)
+  it(
+    "a snapshot that cannot be converted is not restored (an unknown fileencoding is an error, not garbage)",
+    function()
+      local b = vim.api.nvim_create_buf(false, true)
+      vim.bo[b].fileencoding = "no-such-encoding"
+      local lines, err = LH._decode("abc\n", b)
+      H.is_nil(lines)
+      H.match(err, "cannot convert", true)
+    end
+  )
 end)
 
 -- --------------------------------------------------------- visible failures
@@ -276,25 +283,28 @@ describe("snapshot failures are visible", function()
     H.match(st.failing.reason, "injected failure", true)
   end)
 
-  it("recovery clears the failing state, keeps the last failure for the health report, and a new episode notifies again", function()
-    local root = K.mkrepo()
-    K.fail("commit-tree")
-    K.snap(LH, root)
-    K.snap(LH, root)
-    H.eq(1, #notes)
-    H.match(notes[1].msg, "git commit-tree failed", true)
-    K.fail("commit-tree", false)
-    H.ok(K.snap(LH, root))
-    local st = LH.status()[root]
-    H.is_nil(st.failing)
-    H.match(st.last_failure.reason, "commit-tree", true)
-    K.fail("commit-tree")
-    K.write(root .. "/a.txt", "2\n")
-    K.snap(LH, root)
-    K.snap(LH, root)
-    H.eq(2, #notes, "second episode")
-    K.fail("commit-tree", false)
-  end)
+  it(
+    "recovery clears the failing state, keeps the last failure for the health report, and a new episode notifies again",
+    function()
+      local root = K.mkrepo()
+      K.fail("commit-tree")
+      K.snap(LH, root)
+      K.snap(LH, root)
+      H.eq(1, #notes)
+      H.match(notes[1].msg, "git commit-tree failed", true)
+      K.fail("commit-tree", false)
+      H.ok(K.snap(LH, root))
+      local st = LH.status()[root]
+      H.is_nil(st.failing)
+      H.match(st.last_failure.reason, "commit-tree", true)
+      K.fail("commit-tree")
+      K.write(root .. "/a.txt", "2\n")
+      K.snap(LH, root)
+      K.snap(LH, root)
+      H.eq(2, #notes, "second episode")
+      K.fail("commit-tree", false)
+    end
+  )
 
   it("a git that cannot even find the repository is reported with git's own message", function()
     local root = K.mkrepo()
@@ -336,10 +346,24 @@ describe("validated options", function()
   end)
 
   it("bad values are reported in ONE message and the default is used", function()
-    LH.setup({ throttle_s = -5, fail_backoff_s = "ten", list_limit = 0, exit_budget_ms = 1e9, full_scan_s = 0 / 0, bogus = true })
+    LH.setup({
+      throttle_s = -5,
+      fail_backoff_s = "ten",
+      list_limit = 0,
+      exit_budget_ms = 1e9,
+      full_scan_s = 0 / 0,
+      bogus = true,
+    })
     H.eq(1, #notes)
     local m = notes[1].msg
-    for _, frag in ipairs({ "throttle_s", "fail_backoff_s", "list_limit", "exit_budget_ms", "full_scan_s", "unknown option \"bogus\"" }) do
+    for _, frag in ipairs({
+      "throttle_s",
+      "fail_backoff_s",
+      "list_limit",
+      "exit_budget_ms",
+      "full_scan_s",
+      'unknown option "bogus"',
+    }) do
       H.match(m, frag, true)
     end
     H.eq(vim.log.levels.WARN, notes[1].level)
@@ -352,7 +376,13 @@ describe("validated options", function()
   it("good values are taken", function()
     LH.setup({ throttle_s = 5, fail_backoff_s = 2, list_limit = 7, full_scan_s = 0, exit_budget_ms = 100 })
     H.eq(0, #notes)
-    H.eq({ 5, 2, 7, 0, 100 }, { LH.config.throttle_s, LH.config.fail_backoff_s, LH.config.list_limit, LH.config.full_scan_s, LH.config.exit_budget_ms })
+    H.eq({ 5, 2, 7, 0, 100 }, {
+      LH.config.throttle_s,
+      LH.config.fail_backoff_s,
+      LH.config.list_limit,
+      LH.config.full_scan_s,
+      LH.config.exit_budget_ms,
+    })
     LH.setup({ throttle_s = 60, fail_backoff_s = 10, list_limit = 100, full_scan_s = 300, exit_budget_ms = 5000 })
   end)
 

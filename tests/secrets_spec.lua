@@ -18,37 +18,71 @@ local function reset()
 end
 
 local SECRETS = {
-  ".env", ".env.local", "sub/.env.production", "app.env", ".envrc",
-  "cert.pem", "deploy.key", "keys/server.p12", "id_rsa", "id_ed25519", ".ssh/config", ".ssh/known_hosts",
-  ".npmrc", ".netrc", "credentials.json", "sub/credentials.yml", "vault.kdbx", "terraform.tfstate", "prod.tfvars",
-  ".aws/credentials", ".gnupg/pubring.kbx", "service-account-prod.json", "ID_RSA", ".ENV",
+  ".env",
+  ".env.local",
+  "sub/.env.production",
+  "app.env",
+  ".envrc",
+  "cert.pem",
+  "deploy.key",
+  "keys/server.p12",
+  "id_rsa",
+  "id_ed25519",
+  ".ssh/config",
+  ".ssh/known_hosts",
+  ".npmrc",
+  ".netrc",
+  "credentials.json",
+  "sub/credentials.yml",
+  "vault.kdbx",
+  "terraform.tfstate",
+  "prod.tfvars",
+  ".aws/credentials",
+  ".gnupg/pubring.kbx",
+  "service-account-prod.json",
+  "ID_RSA",
+  ".ENV",
 }
 local FINE = {
-  "src/main.rs", "src/id_gen.rs", "src/credentials.rs", "environment.rs", "README.md", "monkey.rs", "docs/env.md",
-  "key_value.rs", "keys.rs", "src/target/mod.rs", "pem.rs", ".envelope.txt", "notes.credentials.md.txt",
+  "src/main.rs",
+  "src/id_gen.rs",
+  "src/credentials.rs",
+  "environment.rs",
+  "README.md",
+  "monkey.rs",
+  "docs/env.md",
+  "key_value.rs",
+  "keys.rs",
+  "src/target/mod.rs",
+  "pem.rs",
+  ".envelope.txt",
+  "notes.credentials.md.txt",
 }
 
 describe("secrets: default exclude list", function()
   before_each(reset)
 
-  it("leaves likely secrets out of the tree, untracked and not ignored by .gitignore, and keeps ordinary files", function()
-    local root = K.mkrepo({ ["a.txt"] = "a\n" })
-    for _, rel in ipairs(SECRETS) do
-      K.write(root .. "/" .. rel, "SECRET-CANARY-" .. rel .. "\n")
+  it(
+    "leaves likely secrets out of the tree, untracked and not ignored by .gitignore, and keeps ordinary files",
+    function()
+      local root = K.mkrepo({ ["a.txt"] = "a\n" })
+      for _, rel in ipairs(SECRETS) do
+        K.write(root .. "/" .. rel, "SECRET-CANARY-" .. rel .. "\n")
+      end
+      for _, rel in ipairs(FINE) do
+        K.write(root .. "/" .. rel, "fine " .. rel .. "\n")
+      end
+      local c = K.snap(LH, root)
+      H.ok(c)
+      local names = K.names(root, c)
+      for _, rel in ipairs(SECRETS) do
+        H.not_ok(vim.tbl_contains(names, rel), rel .. " is in the snapshot")
+      end
+      for _, rel in ipairs(FINE) do
+        H.ok(vim.tbl_contains(names, rel), rel .. " is missing from the snapshot")
+      end
     end
-    for _, rel in ipairs(FINE) do
-      K.write(root .. "/" .. rel, "fine " .. rel .. "\n")
-    end
-    local c = K.snap(LH, root)
-    H.ok(c)
-    local names = K.names(root, c)
-    for _, rel in ipairs(SECRETS) do
-      H.not_ok(vim.tbl_contains(names, rel), rel .. " is in the snapshot")
-    end
-    for _, rel in ipairs(FINE) do
-      H.ok(vim.tbl_contains(names, rel), rel .. " is missing from the snapshot")
-    end
-  end)
+  )
 
   it("never writes the secret's content into the object store, not even as an unreachable blob", function()
     local root = K.mkrepo({ ["a.txt"] = "a\n" })
@@ -62,16 +96,19 @@ describe("secrets: default exclude list", function()
     H.match(r.stdout, "hello", true)
   end)
 
-  it("also leaves out a secret that is tracked in the repository (history has it already, a snapshot adds copies)", function()
-    local root = K.mkrepo({ ["a.txt"] = "a\n", [".env"] = "A=1\n" })
-    K.write(root .. "/.env", "A=2-CHANGED-TRACKED\n")
-    K.write(root .. "/a.txt", "b\n")
-    local c = K.snap(LH, root)
-    H.ok(c)
-    H.not_ok(vim.tbl_contains(K.names(root, c), ".env"))
-    local r = K.run(root, { "cat-file", "--batch-all-objects", "--batch" }, nil, nil, true)
-    H.no_match(r.stdout, "CHANGED-TRACKED", true)
-  end)
+  it(
+    "also leaves out a secret that is tracked in the repository (history has it already, a snapshot adds copies)",
+    function()
+      local root = K.mkrepo({ ["a.txt"] = "a\n", [".env"] = "A=1\n" })
+      K.write(root .. "/.env", "A=2-CHANGED-TRACKED\n")
+      K.write(root .. "/a.txt", "b\n")
+      local c = K.snap(LH, root)
+      H.ok(c)
+      H.not_ok(vim.tbl_contains(K.names(root, c), ".env"))
+      local r = K.run(root, { "cat-file", "--batch-all-objects", "--batch" }, nil, nil, true)
+      H.no_match(r.stdout, "CHANGED-TRACKED", true)
+    end
+  )
 
   it("removes secrets that an earlier version or an earlier exclude list had put into the private index", function()
     local root = K.mkrepo({ ["a.txt"] = "a\n" })
@@ -108,7 +145,15 @@ describe("secrets: configuration", function()
   it("exclude_extra adds patterns (a name at any depth, a directory, a rooted path)", function()
     LH.config.exclude_extra = { "*.secret", "private/", "/only-at-root.txt" }
     local root = K.mkrepo()
-    for _, rel in ipairs({ "x.secret", "d/y.secret", "private/z.txt", "d/private/w.txt", "only-at-root.txt", "d/only-at-root.txt", ".env" }) do
+    for _, rel in ipairs({
+      "x.secret",
+      "d/y.secret",
+      "private/z.txt",
+      "d/private/w.txt",
+      "only-at-root.txt",
+      "d/only-at-root.txt",
+      ".env",
+    }) do
       K.write(root .. "/" .. rel, "1\n")
     end
     local names = K.names(root, K.snap(LH, root))
@@ -216,19 +261,24 @@ describe("secrets: refs/lochist/* and git push --mirror", function()
     H.ok(K.snap(LH, root))
     restore()
     H.eq("#!/bin/sh\necho mine\n", K.read(root .. "/.git/hooks/pre-push"))
-    H.eq(1, #vim.tbl_filter(function(n) return n.msg:find("pre-push", 1, true) end, notes))
+    H.eq(1, #vim.tbl_filter(function(n)
+      return n.msg:find("pre-push", 1, true)
+    end, notes))
   end)
 
-  it("writes the hook into the repository's hooks directory, never through a core.hooksPath that the repo config sets", function()
-    LH.config.push_guard = true
-    local root = K.mkrepo()
-    local elsewhere = vim.fs.dirname(root) .. "/elsewhere"
-    vim.fn.mkdir(elsewhere, "p")
-    K.G(root, "config", "core.hooksPath", elsewhere)
-    H.ok(K.snap(LH, root))
-    H.is_nil(uv.fs_stat(elsewhere .. "/pre-push"), "nothing written outside the repository")
-    H.ok(uv.fs_stat(root .. "/.git/hooks/pre-push"))
-  end)
+  it(
+    "writes the hook into the repository's hooks directory, never through a core.hooksPath that the repo config sets",
+    function()
+      LH.config.push_guard = true
+      local root = K.mkrepo()
+      local elsewhere = vim.fs.dirname(root) .. "/elsewhere"
+      vim.fn.mkdir(elsewhere, "p")
+      K.G(root, "config", "core.hooksPath", elsewhere)
+      H.ok(K.snap(LH, root))
+      H.is_nil(uv.fs_stat(elsewhere .. "/pre-push"), "nothing written outside the repository")
+      H.ok(uv.fs_stat(root .. "/.git/hooks/pre-push"))
+    end
+  )
 
   it("is off by default: no hook appears", function()
     local root = K.mkrepo()

@@ -68,7 +68,10 @@ describe("panel", function()
     H.match(text(st.bufs.list), "autosave" == "x" and "" or "file", true)
     H.eq("M  a.txt" == nil, false)
     H.match(text(st.bufs.files), "a.txt", true)
-    H.eq("XynoHistoryTitle", vim.api.nvim_get_hl(0, { name = "XynoHistoryTitle", link = true }).link and "XynoHistoryTitle")
+    H.eq(
+      "XynoHistoryTitle",
+      vim.api.nvim_get_hl(0, { name = "XynoHistoryTitle", link = true }).link and "XynoHistoryTitle"
+    )
     H.match(vim.wo[st.wins.list].winbar, "file: a.txt", true)
   end)
 
@@ -137,7 +140,13 @@ describe("panel", function()
       return st.loaded and #st.snaps == 1
     end, 10000)
     preview_ready(st, "three")
-    local marks = vim.api.nvim_buf_get_extmarks(st.bufs.preview, vim.api.nvim_create_namespace("xyno_history_panel"), 0, -1, { details = true })
+    local marks = vim.api.nvim_buf_get_extmarks(
+      st.bufs.preview,
+      vim.api.nvim_create_namespace("xyno_history_panel"),
+      0,
+      -1,
+      { details = true }
+    )
     local found = false
     for _, m in ipairs(marks) do
       found = found or m[4].hl_group == "XynoHistoryMatch"
@@ -156,7 +165,8 @@ describe("panel", function()
     local before = K.read(root .. "/a.txt")
     st.actions.revert_file()
     H.wait_for(function()
-      return vim.api.nvim_buf_get_lines(vim.fn.bufnr(root .. "/a.txt"), 0, -1, false)[1] == "one" and #vim.api.nvim_buf_get_lines(vim.fn.bufnr(root .. "/a.txt"), 0, -1, false) == 1
+      return vim.api.nvim_buf_get_lines(vim.fn.bufnr(root .. "/a.txt"), 0, -1, false)[1] == "one"
+        and #vim.api.nvim_buf_get_lines(vim.fn.bufnr(root .. "/a.txt"), 0, -1, false) == 1
     end, 10000, "buffer reverted")
     H.ok(vim.bo[vim.fn.bufnr(root .. "/a.txt")].modified)
     H.eq(before, K.read(root .. "/a.txt"), "disk untouched")
@@ -252,7 +262,13 @@ describe("panel", function()
     H.eq(0, #st.snaps[1].files, "no change recorded: the label alone")
     H.match(text(st.bufs.list), "before refactor", true)
     -- the highlight is on the label
-    local marks = vim.api.nvim_buf_get_extmarks(st.bufs.list, vim.api.nvim_create_namespace("xyno_history_panel"), 0, -1, { details = true })
+    local marks = vim.api.nvim_buf_get_extmarks(
+      st.bufs.list,
+      vim.api.nvim_create_namespace("xyno_history_panel"),
+      0,
+      -1,
+      { details = true }
+    )
     local label = false
     for _, m in ipairs(marks) do
       label = label or m[4].hl_group == "XynoHistoryLabel"
@@ -335,10 +351,18 @@ end)
 describe("highlight groups", function()
   it("XynoHistory* groups exist, link to theme groups and survive :hi clear", function()
     local want = {
-      XynoHistoryTitle = "Title", XynoHistoryAge = "Comment", XynoHistoryLabel = "Special", XynoHistoryMatch = "Search",
-      XynoHistoryAdded = "DiagnosticOk", XynoHistoryModified = "DiagnosticWarn", XynoHistoryDeleted = "DiagnosticError",
-      XynoHistoryDiffAdd = "DiffAdd", XynoHistoryDiffDelete = "DiffDelete", XynoHistoryOk = "DiagnosticOk",
-      XynoHistoryPending = "DiagnosticWarn", XynoHistoryFailing = "DiagnosticError",
+      XynoHistoryTitle = "Title",
+      XynoHistoryAge = "Comment",
+      XynoHistoryLabel = "Special",
+      XynoHistoryMatch = "Search",
+      XynoHistoryAdded = "DiagnosticOk",
+      XynoHistoryModified = "DiagnosticWarn",
+      XynoHistoryDeleted = "DiagnosticError",
+      XynoHistoryDiffAdd = "DiffAdd",
+      XynoHistoryDiffDelete = "DiffDelete",
+      XynoHistoryOk = "DiagnosticOk",
+      XynoHistoryPending = "DiagnosticWarn",
+      XynoHistoryFailing = "DiagnosticError",
     }
     vim.cmd("hi clear")
     vim.api.nvim_exec_autocmds("ColorScheme", {})

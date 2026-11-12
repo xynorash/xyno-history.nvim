@@ -46,21 +46,24 @@ before_each(function()
 end)
 
 describe("fast path", function()
-  it("the first snapshot of a session walks the worktree; a following save does not (no ls-files -o, no add of '.')", function()
-    local root = K.mkrepo({ ["a.txt"] = "a\n", ["b.txt"] = "b\n" })
-    K.write(root .. "/a.txt", "a1\n")
-    H.ok(save(root, "a.txt"))
-    H.eq(1, K.count("^ls%-files %-o"), "first scan lists untracked files")
-    H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- %."))
-    K.clear_log()
-    K.write(root .. "/a.txt", "a2\n")
-    local c = save(root, "a.txt")
-    H.ok(c)
-    H.eq(0, walks(), "no directory walk on the fast path:\n" .. table.concat(K.log(), "\n"))
-    H.eq(1, K.count("^diff%-files"))
-    H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- :%(literal%)a%.txt"))
-    H.eq("a2\n", K.blob(root, c, "a.txt"))
-  end)
+  it(
+    "the first snapshot of a session walks the worktree; a following save does not (no ls-files -o, no add of '.')",
+    function()
+      local root = K.mkrepo({ ["a.txt"] = "a\n", ["b.txt"] = "b\n" })
+      K.write(root .. "/a.txt", "a1\n")
+      H.ok(save(root, "a.txt"))
+      H.eq(1, K.count("^ls%-files %-o"), "first scan lists untracked files")
+      H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- %."))
+      K.clear_log()
+      K.write(root .. "/a.txt", "a2\n")
+      local c = save(root, "a.txt")
+      H.ok(c)
+      H.eq(0, walks(), "no directory walk on the fast path:\n" .. table.concat(K.log(), "\n"))
+      H.eq(1, K.count("^diff%-files"))
+      H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- :%(literal%)a%.txt"))
+      H.eq("a2\n", K.blob(root, c, "a.txt"))
+    end
+  )
 
   it("a save that did not change anything makes no commit and walks nothing", function()
     local root = K.mkrepo()
@@ -70,23 +73,26 @@ describe("fast path", function()
     H.eq(0, walks())
   end)
 
-  it("picks up tracked files changed or deleted by something else (git diff-files) but not new files created behind its back", function()
-    local root = K.mkrepo({ ["a.txt"] = "a\n", ["b.txt"] = "b\n", ["c.txt"] = "c\n" })
-    H.ok(save(root, "a.txt"))
-    K.write(root .. "/b.txt", "b changed by an agent\n")
-    os.remove(root .. "/c.txt")
-    K.write(root .. "/new-by-agent.txt", "n\n")
-    K.write(root .. "/a.txt", "a2\n")
-    local c = save(root, "a.txt")
-    H.ok(c)
-    H.eq("b changed by an agent\n", K.blob(root, c, "b.txt"))
-    H.is_nil(K.blob(root, c, "c.txt"), "deleted file is gone from the snapshot")
-    H.is_nil(K.blob(root, c, "new-by-agent.txt"), "new files wait for the next full scan")
-    -- a forced snapshot is a full scan and finds it
-    local c2 = K.snap(LH, root)
-    H.eq("n\n", K.blob(root, c2, "new-by-agent.txt"))
-    H.ok(walks() >= 2)
-  end)
+  it(
+    "picks up tracked files changed or deleted by something else (git diff-files) but not new files created behind its back",
+    function()
+      local root = K.mkrepo({ ["a.txt"] = "a\n", ["b.txt"] = "b\n", ["c.txt"] = "c\n" })
+      H.ok(save(root, "a.txt"))
+      K.write(root .. "/b.txt", "b changed by an agent\n")
+      os.remove(root .. "/c.txt")
+      K.write(root .. "/new-by-agent.txt", "n\n")
+      K.write(root .. "/a.txt", "a2\n")
+      local c = save(root, "a.txt")
+      H.ok(c)
+      H.eq("b changed by an agent\n", K.blob(root, c, "b.txt"))
+      H.is_nil(K.blob(root, c, "c.txt"), "deleted file is gone from the snapshot")
+      H.is_nil(K.blob(root, c, "new-by-agent.txt"), "new files wait for the next full scan")
+      -- a forced snapshot is a full scan and finds it
+      local c2 = K.snap(LH, root)
+      H.eq("n\n", K.blob(root, c2, "new-by-agent.txt"))
+      H.ok(walks() >= 2)
+    end
+  )
 
   it("the saved file is snapshotted even when it is new and untracked", function()
     local root = K.mkrepo()
@@ -220,22 +226,34 @@ vim.cmd("qa!")
 ]]
 
 describe("exit", function()
-  it("exit_mode = sync: the exit snapshot after a recent full scan takes the fast path and records the final content", function()
-    local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
-    K.write(base .. "/child.lua", child_script)
-    K.clear_log()
-    local t0 = uv.hrtime()
-    local r = vim.system(
-      { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. base .. "/child.lua" },
-      { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "sync" }, text = true }
-    ):wait(60000)
-    H.eq(0, r.code, r.stderr)
-    H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
-    H.eq(2, K.count_commits(root, "refs/lochist/main"))
-    H.eq(1, K.count("^ls%-files %-o"), "only the session's first scan walked the worktree")
-    H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- %."))
-    H.ok((uv.hrtime() - t0) / 1e6 < 15000)
-  end)
+  it(
+    "exit_mode = sync: the exit snapshot after a recent full scan takes the fast path and records the final content",
+    function()
+      local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
+      K.write(base .. "/child.lua", child_script)
+      K.clear_log()
+      local t0 = uv.hrtime()
+      local r = vim
+        .system({
+          vim.v.progpath,
+          "--headless",
+          "-u",
+          "NONE",
+          "-i",
+          "NONE",
+          "-n",
+          "-c",
+          "luafile " .. base .. "/child.lua",
+        }, { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "sync" }, text = true })
+        :wait(60000)
+      H.eq(0, r.code, r.stderr)
+      H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
+      H.eq(2, K.count_commits(root, "refs/lochist/main"))
+      H.eq(1, K.count("^ls%-files %-o"), "only the session's first scan walked the worktree")
+      H.eq(1, K.count("^add %-A %-%-ignore%-errors %-%- %."))
+      H.ok((uv.hrtime() - t0) / 1e6 < 15000)
+    end
+  )
 
   it("exit_budget_ms = 0 skips the exit snapshot", function()
     LH.config.exit_budget_ms = 0
@@ -264,27 +282,39 @@ describe("exit, background worker", function()
     return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root }))
   end
 
-  it("quitting hands the last save to a detached nvim: the final content is recorded after the editor is gone", function()
-    local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
-    K.write(base .. "/child.lua", child_script)
-    K.clear_log()
-    local r = vim.system(
-      { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. base .. "/child.lua" },
-      { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "background" }, text = true }
-    ):wait(60000)
-    H.eq(0, r.code, r.stderr)
-    H.wait_for(function()
-      return K.count_commits(root, "refs/lochist/main") == 2
-    end, 20000, "the worker's snapshot")
-    H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
-    H.eq(1, K.count("^ls%-files %-o"), "the worker took the fast path: no second walk of the worktree")
-    H.wait_for(function()
-      return workers(root) == ""
-    end, 20000, "the worker exits by itself")
-    local res = LH.last_exit(root)
-    H.ok(res and res.ok, "result file: " .. vim.inspect(res))
-    H.eq({}, vim.fn.glob(root .. "/.git/lochist-exit-*.json", true, true), "handoff file removed")
-  end)
+  it(
+    "quitting hands the last save to a detached nvim: the final content is recorded after the editor is gone",
+    function()
+      local root = K.mkrepo({ ["f.txt"] = "0\n", ["other.txt"] = "o\n" })
+      K.write(base .. "/child.lua", child_script)
+      K.clear_log()
+      local r = vim
+        .system({
+          vim.v.progpath,
+          "--headless",
+          "-u",
+          "NONE",
+          "-i",
+          "NONE",
+          "-n",
+          "-c",
+          "luafile " .. base .. "/child.lua",
+        }, { env = { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_EXIT_MODE = "background" }, text = true })
+        :wait(60000)
+      H.eq(0, r.code, r.stderr)
+      H.wait_for(function()
+        return K.count_commits(root, "refs/lochist/main") == 2
+      end, 20000, "the worker's snapshot")
+      H.eq("final\n", K.blob(root, "refs/lochist/main", "f.txt"))
+      H.eq(1, K.count("^ls%-files %-o"), "the worker took the fast path: no second walk of the worktree")
+      H.wait_for(function()
+        return workers(root) == ""
+      end, 20000, "the worker exits by itself")
+      local res = LH.last_exit(root)
+      H.ok(res and res.ok, "result file: " .. vim.inspect(res))
+      H.eq({}, vim.fn.glob(root .. "/.git/lochist-exit-*.json", true, true), "handoff file removed")
+    end
+  )
 
   it("the worker is started detached with a handoff file; nothing is snapshotted in the quitting nvim", function()
     local root = K.mkrepo({ ["f.txt"] = "0\n" })

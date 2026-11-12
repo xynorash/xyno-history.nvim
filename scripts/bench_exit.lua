@@ -13,25 +13,32 @@ end
 local script = vim.fn.tempname() .. ".lua"
 local stamp = vim.fn.tempname()
 vim.fn.writefile({
-  'package.path = "' .. impl .. '/lua/?.lua;' .. impl .. '/lua/?/init.lua;" .. package.path',
+  'package.path = "' .. impl .. "/lua/?.lua;" .. impl .. '/lua/?/init.lua;" .. package.path',
   'local LH = require("xyno_history")',
-  'LH.setup({ retention = false, exit_mode = ' .. (vim.env.XYNO_EXIT_MODE and ('"' .. vim.env.XYNO_EXIT_MODE .. '"') or 'nil') .. ' })',
+  "LH.setup({ retention = false, exit_mode = "
+    .. (vim.env.XYNO_EXIT_MODE and ('"' .. vim.env.XYNO_EXIT_MODE .. '"') or "nil")
+    .. " })",
   'local f = "' .. repo .. '/pkg3/mod4/f5.js"',
-  'vim.cmd.edit(f)',
+  "vim.cmd.edit(f)",
   'vim.api.nvim_buf_set_lines(0, 0, -1, false, { "// one" })',
-  'vim.cmd.write()',
-  'vim.wait(60000, function() return vim.fn.system({ "git", "-C", "' .. repo .. '", "rev-parse", "-q", "--verify", "refs/lochist/main" }) ~= "" end, 20)',
-  'vim.wait(1500)',
+  "vim.cmd.write()",
+  'vim.wait(60000, function() return vim.fn.system({ "git", "-C", "'
+    .. repo
+    .. '", "rev-parse", "-q", "--verify", "refs/lochist/main" }) ~= "" end, 20)',
+  "vim.wait(1500)",
   'vim.api.nvim_buf_set_lines(0, 0, -1, false, { "// two" })',
-  'vim.cmd.write()',
+  "vim.cmd.write()",
   'vim.fn.writefile({ tostring(vim.uv.hrtime()) }, "' .. stamp .. '")',
   'vim.cmd("qa!")',
 }, script)
-local r = vim.system({ vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. script }, { text = true }):wait(120000)
+local r = vim
+  .system({ vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. script }, { text = true })
+  :wait(120000)
 local t1 = uv.hrtime()
 local t0 = tonumber(vim.fn.readfile(stamp)[1])
 local function recorded()
-  return vim.fn.system({ "git", "-C", repo, "show", "refs/lochist/main:pkg3/mod4/f5.js" }):find("// two", 1, true) ~= nil
+  return vim.fn.system({ "git", "-C", repo, "show", "refs/lochist/main:pkg3/mod4/f5.js" }):find("// two", 1, true)
+    ~= nil
 end
 -- exit_mode "background": the snapshot lands after the process is gone; wait for it
 vim.wait(30000, recorded, 10)

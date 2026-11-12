@@ -119,7 +119,17 @@ function K.count(pat)
 end
 
 function K.run(dir, args, stdin, env, raw)
-  local cmd = { K.REAL_GIT, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.quotepath=false" }
+  local cmd = {
+    K.REAL_GIT,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "commit.gpgsign=false",
+    "-c",
+    "core.quotepath=false",
+  }
   vim.list_extend(cmd, args)
   return vim.system(cmd, { cwd = dir, text = not raw, stdin = stdin, env = env }):wait(60000)
 end

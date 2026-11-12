@@ -217,10 +217,20 @@ local function validate(opts)
     problems[#problems + 1] = msg
   end
   local known = {
-    commands = "boolean", keymaps = "boolean|table", max_bytes = "number", max_total_bytes = "number",
-    throttle_s = "number", fail_backoff_s = "number", exit_budget_ms = "number", full_scan_s = "number",
-    list_limit = "number", exclude = "boolean|table", exclude_extra = "table", push_guard = "boolean",
-    retention = "boolean|table", exit_mode = "string",
+    commands = "boolean",
+    keymaps = "boolean|table",
+    max_bytes = "number",
+    max_total_bytes = "number",
+    throttle_s = "number",
+    fail_backoff_s = "number",
+    exit_budget_ms = "number",
+    full_scan_s = "number",
+    list_limit = "number",
+    exclude = "boolean|table",
+    exclude_extra = "table",
+    push_guard = "boolean",
+    retention = "boolean|table",
+    exit_mode = "string",
   }
   for k, v in pairs(opts) do
     local want = known[k]
@@ -229,7 +239,15 @@ local function validate(opts)
     elseif not vim.tbl_contains(vim.split(want, "|", { plain = true }), type(v)) then
       bad(("%s must be a %s, got %s (default kept)"):format(k, want:gsub("|", " or "), type(v)))
     elseif RANGES[k] and not is_int_in(v, RANGES[k]) then
-      bad(("%s must be a number between %d and %d, got %s (default %s kept)"):format(k, RANGES[k][1], RANGES[k][2], tostring(v), tostring(DEFAULTS[k])))
+      bad(
+        ("%s must be a number between %d and %d, got %s (default %s kept)"):format(
+          k,
+          RANGES[k][1],
+          RANGES[k][2],
+          tostring(v),
+          tostring(DEFAULTS[k])
+        )
+      )
     elseif k == "exit_mode" and not vim.tbl_contains({ "background", "sync", "off" }, v) then
       bad(('exit_mode must be "background", "sync" or "off", got %q (default kept)'):format(tostring(v)))
     elseif k == "exclude" and v == true then
@@ -254,7 +272,14 @@ local function validate(opts)
         elseif RETENTION_RANGES[rk] and (rv == false or is_int_in(rv, RETENTION_RANGES[rk])) then
           clean[rk] = rv
         elseif RETENTION_RANGES[rk] or rk == "auto" then
-          bad(("retention.%s must be %s, got %s (default kept)"):format(rk, rk == "auto" and "a boolean" or ("false or a number between %d and %d"):format(RETENTION_RANGES[rk][1], RETENTION_RANGES[rk][2]), tostring(rv)))
+          bad(
+            ("retention.%s must be %s, got %s (default kept)"):format(
+              rk,
+              rk == "auto" and "a boolean"
+                or ("false or a number between %d and %d"):format(RETENTION_RANGES[rk][1], RETENTION_RANGES[rk][2]),
+              tostring(rv)
+            )
+          )
         else
           bad(("unknown option retention.%s (ignored)"):format(rk))
         end
@@ -480,7 +505,10 @@ local function record_failure(root, reason, immediate, message)
   last_failure[root] = { reason = reason, time = f.time }
   if (immediate or f.n >= 2) and not f.notified then
     f.notified = true
-    vim.notify(message or ("local history: snapshots are failing, " .. reason .. " (details: :checkhealth xyno_history)"), vim.log.levels.WARN)
+    vim.notify(
+      message or ("local history: snapshots are failing, " .. reason .. " (details: :checkhealth xyno_history)"),
+      vim.log.levels.WARN
+    )
   end
 end
 
@@ -655,7 +683,14 @@ local function prepare(root, gitdir, exclude)
   -- status, `git add -A` and the snapshots. The root and the workspace members (depth <= 2)
   -- get their own line; the unanchored line of an older version is migrated.
   local want = { "/target/" }
-  for _, c in ipairs(vim.list_extend(vim.fn.glob(root .. "/*/Cargo.toml", true, true), vim.fn.glob(root .. "/*/*/Cargo.toml", true, true))) do
+  for _, c in
+    ipairs(
+      vim.list_extend(
+        vim.fn.glob(root .. "/*/Cargo.toml", true, true),
+        vim.fn.glob(root .. "/*/*/Cargo.toml", true, true)
+      )
+    )
+  do
     want[#want + 1] = "/" .. vim.fs.dirname(c):sub(#root + 2) .. "/target/"
   end
   local have, changed = {}, false
@@ -726,7 +761,13 @@ local function harden(root, run, cb)
   end
   purged[root] = nil -- a new exclude list: look for stale index entries again
   git(
-    { "config", "--name-only", "--null", "--get-regexp", [[^(filter|diff|merge|mergetool|difftool)\..*\.(clean|smudge|process|textconv|command|driver|cmd)$]] },
+    {
+      "config",
+      "--name-only",
+      "--null",
+      "--get-regexp",
+      [[^(filter|diff|merge|mergetool|difftool)\..*\.(clean|smudge|process|textconv|command|driver|cmd)$]],
+    },
     root,
     nil,
     function(out)
@@ -749,7 +790,13 @@ local function harden(root, run, cb)
           if file then
             extra[#extra + 1] = { "core.excludesFile", file }
           end
-          hardened[root] = { sig = sig, pairs = extra, empty_tree = empty and empty:match("^%x+$") or nil, excludes = file, excludes_err = err }
+          hardened[root] = {
+            sig = sig,
+            pairs = extra,
+            empty_tree = empty and empty:match("^%x+$") or nil,
+            excludes = file,
+            excludes_err = err,
+          }
           cb()
         end, root, run)
       end, false, run)
@@ -800,13 +847,21 @@ local function note_big(root, rel, size, cap, budget)
   if budget then
     warn_once(
       "big:" .. root .. "/" .. rel,
-      ("local history: skipping %s (%.0f MB; the snapshot is over %.0f MB, setup option max_total_bytes)"):format(rel, size / 1048576, budget / 1048576),
+      ("local history: skipping %s (%.0f MB; the snapshot is over %.0f MB, setup option max_total_bytes)"):format(
+        rel,
+        size / 1048576,
+        budget / 1048576
+      ),
       vim.log.levels.INFO
     )
   else
     warn_once(
       "big:" .. root .. "/" .. rel,
-      ("local history: skipping %s (%.0f MB, over the %.0f MB cap; setup option max_bytes)"):format(rel, size / 1048576, cap / 1048576),
+      ("local history: skipping %s (%.0f MB, over the %.0f MB cap; setup option max_bytes)"):format(
+        rel,
+        size / 1048576,
+        cap / 1048576
+      ),
       vim.log.levels.INFO
     )
   end
@@ -953,7 +1008,12 @@ local function commit_tree(root, build, env, opts, g, finish)
                   end, math.random(30, 150)) -- jitter: racers must not retry in lockstep
                 end
                 migrated[root] = nil -- retry the old-ref migration next time
-                finish(nil, false, why("git update-ref", uo), "local history: update-ref failed: " .. vim.trim(uo.stderr or ""))
+                finish(
+                  nil,
+                  false,
+                  why("git update-ref", uo),
+                  "local history: update-ref failed: " .. vim.trim(uo.stderr or "")
+                )
               end)
             end)
           end
@@ -1125,7 +1185,12 @@ function M.snapshot(opts)
     if M.config.push_guard then
       local common = vim.fs.dirname(vim.fs.dirname(exclude))
       if install_push_guard(common) == "other" then
-        warn_once("guard:" .. root, "local history: push_guard is set but " .. common .. "/hooks/pre-push is not ours; left alone (see :checkhealth xyno_history)")
+        warn_once(
+          "guard:" .. root,
+          "local history: push_guard is set but "
+            .. common
+            .. "/hooks/pre-push is not ours; left alone (see :checkhealth xyno_history)"
+        )
       end
     end
     os.remove(index .. ".lock") -- ours alone: a leftover of a killed git
@@ -1203,7 +1268,12 @@ function M.snapshot(opts)
                   return add_all(tries + 1, cb)
                 end
                 if lock_error(ao.stderr) then
-                  return finish(nil, false, why("git add", ao), "local history: git lock error, snapshots skipped: " .. vim.trim(ao.stderr or ""))
+                  return finish(
+                    nil,
+                    false,
+                    why("git add", ao),
+                    "local history: git lock error, snapshots skipped: " .. vim.trim(ao.stderr or "")
+                  )
                 end
                 return finish(nil, false, why("git add", ao))
               end
@@ -1237,20 +1307,45 @@ function M.snapshot(opts)
           if not purged[root] and have_index then
             purged[root] = true
             -- index entries that match the exclude patterns (an older version, an older list)
-            g({ "ls-files", "-c", "-i", "-z", "--exclude-from=" .. (hardened[root].excludes or "/dev/null") }, env, function(list, lo)
-              if not list and lo.code ~= 0 then
-                return finish(nil, false, why("git ls-files", lo))
-              end
-              if (list or "") == "" or not hardened[root].excludes then
-                return purge_big()
-              end
-              g({ "rm", "--cached", "-q", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul" }, vim.tbl_extend("force", env, { GIT_LITERAL_PATHSPECS = "1" }), function(_, ro)
-                if ro.code ~= 0 then
-                  return finish(nil, false, why("git rm --cached", ro))
+            g(
+              {
+                "ls-files",
+                "-c",
+                "-i",
+                "-z",
+                "--exclude-from=" .. (hardened[root].excludes or "/dev/null"),
+              },
+              env,
+              function(list, lo)
+                if not list and lo.code ~= 0 then
+                  return finish(nil, false, why("git ls-files", lo))
                 end
-                purge_big()
-              end, false, list)
-            end, true)
+                if (list or "") == "" or not hardened[root].excludes then
+                  return purge_big()
+                end
+                g(
+                  {
+                    "rm",
+                    "--cached",
+                    "-q",
+                    "-f",
+                    "--ignore-unmatch",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                  },
+                  vim.tbl_extend("force", env, { GIT_LITERAL_PATHSPECS = "1" }),
+                  function(_, ro)
+                    if ro.code ~= 0 then
+                      return finish(nil, false, why("git rm --cached", ro))
+                    end
+                    purge_big()
+                  end,
+                  false,
+                  list
+                )
+              end,
+              true
+            )
           else
             purged[root] = true
             purge_big()
@@ -1269,9 +1364,12 @@ local function unquote(path)
     return path
   end
   local map = { n = "\n", t = "\t", ['"'] = '"', ["\\"] = "\\", r = "\r", a = "\a", b = "\b", f = "\f", v = "\v" }
-  local s = path:sub(2, -2):gsub("\\(%d%d%d)", function(o)
-    return string.char(tonumber(o, 8))
-  end):gsub("\\(.)", map)
+  local s = path
+    :sub(2, -2)
+    :gsub("\\(%d%d%d)", function(o)
+      return string.char(tonumber(o, 8))
+    end)
+    :gsub("\\(.)", map)
   return s
 end
 
@@ -1293,7 +1391,14 @@ local function pick(cb)
         end
         local args = vim.list_extend({ "log" }, refs)
         vim.list_extend(args, {
-          "--follow", "--name-status", "-z", "--format=%x01%H%x09%ar%x09%s", "-n", tostring(num("list_limit")), "--diff-filter=d", "--",
+          "--follow",
+          "--name-status",
+          "-z",
+          "--format=%x01%H%x09%ar%x09%s",
+          "-n",
+          tostring(num("list_limit")),
+          "--diff-filter=d",
+          "--",
           ":(literal)" .. rel,
         })
         git(args, root, nil, function(out)
@@ -1320,7 +1425,13 @@ local function pick(cb)
           }, function(choice)
             if choice then
               local f = vim.split(choice, "\t", { plain = true })
-              cb({ root = root, rel = rel, rel_at = (f[4] and f[4] ~= "") and f[4] or rel, file = file, hash = f[1] })
+              cb({
+                root = root,
+                rel = rel,
+                rel_at = (f[4] and f[4] ~= "") and f[4] or rel,
+                file = file,
+                hash = f[1],
+              })
             end
           end)
         end, true)
@@ -1342,7 +1453,10 @@ function M._decode(content, buf)
     text, meta.bomb = text:sub(4), true
   elseif text:sub(1, 4) == "\255\254\0\0" and (fenc:find("^utf%-32") or fenc:find("^ucs%-4")) then
     text, meta.bomb = text:sub(5), true
-  elseif (text:sub(1, 2) == "\255\254" or text:sub(1, 2) == "\254\255") and (fenc == "" or fenc:find("^utf%-16") or fenc:find("^ucs%-2")) then
+  elseif
+    (text:sub(1, 2) == "\255\254" or text:sub(1, 2) == "\254\255")
+    and (fenc == "" or fenc:find("^utf%-16") or fenc:find("^ucs%-2"))
+  then
     if fenc == "" then
       fenc = text:sub(1, 2) == "\255\254" and "utf-16le" or "utf-16"
     end
@@ -1472,14 +1586,18 @@ end
 
 local function sysco(args, root, stdin)
   local co = assert(coroutine.running())
-  vim.system(vim.list_extend({ "git" }, args), { cwd = root, env = M.git_env(root), text = true, stdin = stdin, timeout = 120000 }, function(o)
-    vim.schedule(function()
-      local ok, err = coroutine.resume(co, o)
-      if not ok then
-        vim.notify("local history: " .. tostring(err), vim.log.levels.ERROR)
-      end
-    end)
-  end)
+  vim.system(
+    vim.list_extend({ "git" }, args),
+    { cwd = root, env = M.git_env(root), text = true, stdin = stdin, timeout = 120000 },
+    function(o)
+      vim.schedule(function()
+        local ok, err = coroutine.resume(co, o)
+        if not ok then
+          vim.notify("local history: " .. tostring(err), vim.log.levels.ERROR)
+        end
+      end)
+    end
+  )
   local o = coroutine.yield()
   return o.code == 0 and vim.trim(o.stdout or "") or nil, o
 end
@@ -1524,12 +1642,18 @@ prune_async = function(root, policy, o)
             local c = commits[i]
             local from = i < n and "from :" .. (n - i) .. "\n" or ""
             vim.list_extend(stream, {
-              ("commit refs/xyno-history-prune\nmark :%d\ncommitter xyno-history <lochist@xyno-history> %d +0000\ndata %d\n%s\n%sM 040000 %s \"\"\n"):format(
-                n - i + 1, c.ct, #c.msg, c.msg, from, c.t
+              ('commit refs/xyno-history-prune\nmark :%d\ncommitter xyno-history <lochist@xyno-history> %d +0000\ndata %d\n%s\n%sM 040000 %s ""\n'):format(
+                n - i + 1,
+                c.ct,
+                #c.msg,
+                c.msg,
+                from,
+                c.t
               ),
             })
           end
-          local tip = sysco({ "fast-import", "--quiet" }, root, table.concat(stream)) and sysco({ "rev-parse", "refs/xyno-history-prune" }, root)
+          local tip = sysco({ "fast-import", "--quiet" }, root, table.concat(stream))
+            and sysco({ "rev-parse", "refs/xyno-history-prune" }, root)
           if tip and sysco({ "update-ref", ref, tip, commits[1].h }, root) then
             dropped = dropped + #commits - n
           elseif not o.auto then
@@ -1556,7 +1680,8 @@ prune_async = function(root, policy, o)
     )
     local _, go = sysco({ "gc", "--quiet", o.now and "--prune=now" or "--prune=1.hour.ago" }, root)
     vim.notify(
-      go.code == 0 and ("local history: pruned, git gc done" .. (o.now and "" or " (objects younger than an hour: next gc, or :LocalHistoryPrune!)"))
+      go.code == 0
+          and ("local history: pruned, git gc done" .. (o.now and "" or " (objects younger than an hour: next gc, or :LocalHistoryPrune!)"))
         or "local history: git gc failed: " .. vim.trim(go.stderr or ""),
       go.code == 0 and vim.log.levels.INFO or vim.log.levels.WARN
     )
@@ -1574,7 +1699,10 @@ function M.prune(arg, now)
   end
   local days, keep = arg:match("^(%d+)d$"), arg:match("^(%d+)$")
   if not ((days or keep) and tonumber(days or keep) > 0) then
-    return vim.notify("usage: :LocalHistoryPrune [N | Nd]  (keep the newest N snapshots per branch, or N days)", vim.log.levels.WARN)
+    return vim.notify(
+      "usage: :LocalHistoryPrune [N | Nd]  (keep the newest N snapshots per branch, or N days)",
+      vim.log.levels.WARN
+    )
   end
   local name = vim.api.nvim_buf_get_name(0)
   local root = vim.fs.root(name ~= "" and name or vim.uv.cwd(), ".git")
@@ -1658,7 +1786,10 @@ function M.statusline(buf)
     return "LH ~", "XynoHistoryPending"
   elseif last[root] then
     local d = os.time() - last[root]
-    local age = d < 90 and "now" or d < 5400 and (math.floor(d / 60 + 0.5) .. "m") or d < 129600 and (math.floor(d / 3600 + 0.5) .. "h") or (math.floor(d / 86400 + 0.5) .. "d")
+    local age = d < 90 and "now"
+      or d < 5400 and (math.floor(d / 60 + 0.5) .. "m")
+      or d < 129600 and (math.floor(d / 3600 + 0.5) .. "h")
+      or (math.floor(d / 86400 + 0.5) .. "d")
     return "LH " .. age, "XynoHistoryOk"
   end
   return "", nil
@@ -1733,7 +1864,14 @@ local function spawn_exit_workers(targets)
       paths[#paths + 1] = rel
     end
     local file = ("%s/lochist-exit-%d.json"):format(gitdir, vim.uv.os_getpid())
-    local ok_enc, json = pcall(vim.json.encode, { parent = vim.uv.os_getpid(), root = root, gitdir = gitdir, config = cfg, touched = paths, fullscan = fullscan[root] })
+    local ok_enc, json = pcall(vim.json.encode, {
+      parent = vim.uv.os_getpid(),
+      root = root,
+      gitdir = gitdir,
+      config = cfg,
+      touched = paths,
+      fullscan = fullscan[root],
+    })
     local f = ok_enc and io.open(file, "wb")
     if not f then
       return false
@@ -1872,10 +2010,17 @@ function M.setup(opts)
     })
     vim.api.nvim_create_user_command("LocalHistoryLabel", function(c)
       M.label(c.args)
-    end, { nargs = "?", desc = "Put a label on the current state of the repository (a snapshot even if nothing changed)" })
+    end, {
+      nargs = "?",
+      desc = "Put a label on the current state of the repository (a snapshot even if nothing changed)",
+    })
     vim.api.nvim_create_user_command("LocalHistoryPrune", function(c)
       M.prune(c.args, c.bang)
-    end, { nargs = "?", bang = true, desc = "Drop old local-history snapshots: [N] newest per branch or [N]d days (default 30d)" })
+    end, {
+      nargs = "?",
+      bang = true,
+      desc = "Drop old local-history snapshots: [N] newest per branch or [N]d days (default 30d)",
+    })
     vim.api.nvim_create_user_command(
       "LocalHistoryRestore",
       M.restore,
@@ -1886,7 +2031,13 @@ function M.setup(opts)
   if km then
     -- true: <leader>gH browses; a table maps action ("browse", "panel", "label", "restore", "prune") to a lhs
     local maps = km == true and { browse = "<leader>gH" } or km
-    local rhs = { panel = "<cmd>LocalHistoryPanel<cr>", label = "<cmd>LocalHistoryLabel<cr>", browse = "<cmd>LocalHistory<cr>", restore = "<cmd>LocalHistoryRestore<cr>", prune = "<cmd>LocalHistoryPrune<cr>" }
+    local rhs = {
+      panel = "<cmd>LocalHistoryPanel<cr>",
+      label = "<cmd>LocalHistoryLabel<cr>",
+      browse = "<cmd>LocalHistory<cr>",
+      restore = "<cmd>LocalHistoryRestore<cr>",
+      prune = "<cmd>LocalHistoryPrune<cr>",
+    }
     for action, lhs in pairs(maps) do
       if rhs[action] and lhs then
         vim.keymap.set("n", lhs, rhs[action], { desc = "Local history: " .. action })

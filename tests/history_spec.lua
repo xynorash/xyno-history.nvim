@@ -36,9 +36,7 @@ local function read(path)
 end
 
 -- the fake git: logs "<GIT_INDEX_FILE>\t<args>", then does what ctl/<subcommand> says
-write(
-  base .. "/bin/git",
-  [[#!/bin/bash
+write(base .. "/bin/git", [[#!/bin/bash
 d="$XYNO_FAKE"
 if [ -n "$d" ] && [ -d "$d" ]; then
   printf '%s\t%s\n' "$GIT_INDEX_FILE" "$*" >> "$d/log"
@@ -58,8 +56,7 @@ if [ -n "$d" ] && [ -d "$d" ]; then
   fi
 fi
 exec "]] .. REAL_GIT .. [[" "$@"
-]]
-)
+]])
 vim.fn.setfperm(base .. "/bin/git", "rwxr-xr-x")
 write(base .. "/global_ignore", "*.globalignored\n")
 write(base .. "/gitconfig", "[core]\n\texcludesFile = " .. base .. "/global_ignore\n")
@@ -158,7 +155,17 @@ local function state(name)
 end
 
 local function run(dir, args, stdin)
-  local cmd = { REAL_GIT, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.quotepath=false" }
+  local cmd = {
+    REAL_GIT,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "commit.gpgsign=false",
+    "-c",
+    "core.quotepath=false",
+  }
   vim.list_extend(cmd, args)
   return vim.system(cmd, { cwd = dir, text = true, stdin = stdin }):wait(60000)
 end
@@ -326,7 +333,11 @@ local function chain(root, ref, items, file)
   for i, it in ipairs(items) do
     local msg = it.msg or ("snap" .. i)
     s[#s + 1] = ("commit %s\nmark :%d\ncommitter xyno-history <lochist@xyno-history> %d +0000\ndata %d\n%s\n"):format(
-      ref, i, now - (it.days or 0) * 86400, #msg, msg
+      ref,
+      i,
+      now - (it.days or 0) * 86400,
+      #msg,
+      msg
     )
     if i > 1 then
       s[#s + 1] = ("from :%d\n"):format(i - 1)
@@ -427,13 +438,25 @@ describe("wiring", function()
   end)
 
   it("commands = false registers no command", function()
-    local child = vim.system({
-      vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c",
-      "lua package.path=vim.env.XYNO_REPO..'/lua/?.lua;'..vim.env.XYNO_REPO..'/lua/?/init.lua;'..package.path",
-      "-c", "lua require('xyno_history').setup({ commands = false })",
-      "-c", "lua io.stdout:write(tostring(vim.fn.exists(':LocalHistory')), '\\n')",
-      "-c", "qa!",
-    }, { text = true, env = { XYNO_REPO = H.repo } }):wait(20000)
+    local child = vim
+      .system({
+        vim.v.progpath,
+        "--headless",
+        "-u",
+        "NONE",
+        "-i",
+        "NONE",
+        "-n",
+        "-c",
+        "lua package.path=vim.env.XYNO_REPO..'/lua/?.lua;'..vim.env.XYNO_REPO..'/lua/?/init.lua;'..package.path",
+        "-c",
+        "lua require('xyno_history').setup({ commands = false })",
+        "-c",
+        "lua io.stdout:write(tostring(vim.fn.exists(':LocalHistory')), '\\n')",
+        "-c",
+        "qa!",
+      }, { text = true, env = { XYNO_REPO = H.repo } })
+      :wait(20000)
     H.match(child.stdout or "", "0", true)
     H.no_match(child.stdout or "", "2", true)
   end)
@@ -469,7 +492,13 @@ describe("snapshot", function()
     local dir = H.tmpdir()
     write(dir .. "/x.txt", "x\n")
     local called = false
-    local ok, err = pcall(LH.snapshot, { path = dir .. "/x.txt", force = true, done = function() called = true end })
+    local ok, err = pcall(LH.snapshot, {
+      path = dir .. "/x.txt",
+      force = true,
+      done = function()
+        called = true
+      end,
+    })
     H.ok(ok, tostring(err))
     vim.wait(400)
     H.not_ok(called, "done must not be called without a repo")
@@ -556,14 +585,24 @@ describe("snapshot", function()
     H.eq(2, count(root, "refs/lochist/main"))
   end)
 
-  it("done(commit) is called with the commit hash; M.snapshot takes the current buffer when no path is given", function()
-    local root = mkrepo()
-    open_file(root, "a.txt")
-    local got, called = nil, false
-    LH.snapshot({ force = true, done = function(c) got, called = c, true end })
-    H.wait_for(function() return called end, 15000, "done")
-    H.eq(tip(root, "refs/lochist/main"), got)
-  end)
+  it(
+    "done(commit) is called with the commit hash; M.snapshot takes the current buffer when no path is given",
+    function()
+      local root = mkrepo()
+      open_file(root, "a.txt")
+      local got, called = nil, false
+      LH.snapshot({
+        force = true,
+        done = function(c)
+          got, called = c, true
+        end,
+      })
+      H.wait_for(function()
+        return called
+      end, 15000, "done")
+      H.eq(tip(root, "refs/lochist/main"), got)
+    end
+  )
 end)
 
 -- ----------------------------------------------------- 5-6. refs and branches
@@ -637,38 +676,38 @@ end)
 -- ------------------------------------------------------ 7. excludes
 
 describe("excludes", function()
-  it("keeps /target/ (root and members) out via anchored .git/info/exclude lines; src/target/mod.rs stays; .gitignore and the global ignore are honoured", function()
-    local root = mkrepo({ ["keep.txt"] = "k\n", [".gitignore"] = "*.gitignored\n" })
-    write(root .. "/.git/info/exclude", "# mine\n*.bak\n")
-    write(root .. "/.git/lochist-exclude", "old\n")
-    for rel, text in pairs({
-      ["x.gitignored"] = "1",
-      ["x.globalignored"] = "2",
-      ["x.bak"] = "3",
-      ["target/debug/a"] = "4",
-      ["sub/target/b"] = "5",
-      ["pkg/target-notes.txt"] = "6",
-      ["crates/m/Cargo.toml"] = "[package]\n",
-      ["crates/m/target/c"] = "7",
-    }) do
-      write(root .. "/" .. rel, text)
+  it(
+    "keeps /target/ (root and members) out via anchored .git/info/exclude lines; src/target/mod.rs stays; .gitignore and the global ignore are honoured",
+    function()
+      local root = mkrepo({ ["keep.txt"] = "k\n", [".gitignore"] = "*.gitignored\n" })
+      write(root .. "/.git/info/exclude", "# mine\n*.bak\n")
+      write(root .. "/.git/lochist-exclude", "old\n")
+      for rel, text in pairs({
+        ["x.gitignored"] = "1",
+        ["x.globalignored"] = "2",
+        ["x.bak"] = "3",
+        ["target/debug/a"] = "4",
+        ["sub/target/b"] = "5",
+        ["pkg/target-notes.txt"] = "6",
+        ["crates/m/Cargo.toml"] = "[package]\n",
+        ["crates/m/target/c"] = "7",
+      }) do
+        write(root .. "/" .. rel, text)
+      end
+      local c = snap(root)
+      H.ok(c)
+      H.eq({ ".gitignore", "crates/m/Cargo.toml", "keep.txt", "pkg/target-notes.txt", "sub/target/b" }, names(root, c))
+      local ex = vim.fn.readfile(root .. "/.git/info/exclude")
+      H.eq({ "# mine", "*.bak", "/target/", "/crates/m/target/" }, ex)
+      H.is_nil(uv.fs_stat(root .. "/.git/lochist-exclude"), "old lochist-exclude removed")
+      H.no_match(G(root, "status", "--porcelain"), "target", true)
+      -- a second session (prepare runs again): still a single line
+      state("prepared")[root] = nil
+      write(root .. "/keep.txt", "k2\n")
+      H.ok(snap(root))
+      H.eq({ "# mine", "*.bak", "/target/", "/crates/m/target/" }, vim.fn.readfile(root .. "/.git/info/exclude"))
     end
-    local c = snap(root)
-    H.ok(c)
-    H.eq(
-      { ".gitignore", "crates/m/Cargo.toml", "keep.txt", "pkg/target-notes.txt", "sub/target/b" },
-      names(root, c)
-    )
-    local ex = vim.fn.readfile(root .. "/.git/info/exclude")
-    H.eq({ "# mine", "*.bak", "/target/", "/crates/m/target/" }, ex)
-    H.is_nil(uv.fs_stat(root .. "/.git/lochist-exclude"), "old lochist-exclude removed")
-    H.no_match(G(root, "status", "--porcelain"), "target", true)
-    -- a second session (prepare runs again): still a single line
-    state("prepared")[root] = nil
-    write(root .. "/keep.txt", "k2\n")
-    H.ok(snap(root))
-    H.eq({ "# mine", "*.bak", "/target/", "/crates/m/target/" }, vim.fn.readfile(root .. "/.git/info/exclude"))
-  end)
+  )
 
   it("migrates the unanchored `target/` line of an older version", function()
     local root = mkrepo()
@@ -704,7 +743,10 @@ describe("size cap (the max_bytes option)", function()
     write(root .. "/small.txt", "s\n")
     local c = snap(root)
     H.eq({ "a.txt", "small.txt" }, names(root, c))
-    H.ok(log_count("^[^\t]*\t" .. vim.pesc("add -A --ignore-errors -- . :(exclude,literal)big.bin")) == 1, "pathspec in git add")
+    H.ok(
+      log_count("^[^\t]*\t" .. vim.pesc("add -A --ignore-errors -- . :(exclude,literal)big.bin")) == 1,
+      "pathspec in git add"
+    )
     local n = note_matching("local history: skipping big.bin")
     H.eq(1, #n)
     H.eq("local history: skipping big.bin (2 MB, over the 1 MB cap; setup option max_bytes)", n[1].msg)
@@ -714,56 +756,68 @@ describe("size cap (the max_bytes option)", function()
     H.eq(1, #note_matching("local history: skipping big.bin"), "notice only once")
   end)
 
-  it("many untracked files: the size check runs in slices across event-loop turns and still finds a big file in the last slice", function()
-    LH.config.max_bytes = MB
-    local root = mkrepo()
-    vim.fn.mkdir(root .. "/many", "p")
-    for i = 1, 4500 do
-      write(("%s/many/f%05d.txt"):format(root, i), "x")
+  it(
+    "many untracked files: the size check runs in slices across event-loop turns and still finds a big file in the last slice",
+    function()
+      LH.config.max_bytes = MB
+      local root = mkrepo()
+      vim.fn.mkdir(root .. "/many", "p")
+      for i = 1, 4500 do
+        write(("%s/many/f%05d.txt"):format(root, i), "x")
+      end
+      write(root .. "/zz-big.bin", string.rep("x", 2 * MB))
+      local c = snap(root)
+      H.ok(c, "snapshot made")
+      local got = names(root, c)
+      H.eq(4501, #got, "a.txt + 4500 small files")
+      H.not_ok(vim.tbl_contains(got, "zz-big.bin"), "the big file in the last slice is skipped")
+      H.eq(1, #note_matching("local history: skipping zz-big.bin"))
     end
-    write(root .. "/zz-big.bin", string.rep("x", 2 * MB))
-    local c = snap(root)
-    H.ok(c, "snapshot made")
-    local got = names(root, c)
-    H.eq(4501, #got, "a.txt + 4500 small files")
-    H.not_ok(vim.tbl_contains(got, "zz-big.bin"), "the big file in the last slice is skipped")
-    H.eq(1, #note_matching("local history: skipping zz-big.bin"))
-  end)
+  )
 
-  it("defaults to 10 MB; 0 and negative disable the cap, a non-number keeps the default; a numeric string is honoured", function()
-    local root = mkrepo()
-    write(root .. "/big.bin", string.rep("x", 11 * MB))
-    local c = snap(root)
-    H.eq({ "a.txt" }, names(root, c), "11 MB over the 10 MB default")
-    LH.config.max_bytes = "abc" -- not a number: still the 10 MB default
-    write(root .. "/a.txt", "abc\n")
-    c = snap(root)
-    H.not_ok(vim.tbl_contains(names(root, c), "big.bin"), "a non-numeric cap must not lift the cap")
-    for _, v in ipairs({ 0, -1 }) do
-      LH.config.max_bytes = v
-      write(root .. "/a.txt", "v" .. tostring(v) .. "\n")
+  it(
+    "defaults to 10 MB; 0 and negative disable the cap, a non-number keeps the default; a numeric string is honoured",
+    function()
+      local root = mkrepo()
+      write(root .. "/big.bin", string.rep("x", 11 * MB))
+      local c = snap(root)
+      H.eq({ "a.txt" }, names(root, c), "11 MB over the 10 MB default")
+      LH.config.max_bytes = "abc" -- not a number: still the 10 MB default
+      write(root .. "/a.txt", "abc\n")
       c = snap(root)
-      H.has(names(root, c), "big.bin", "cap disabled by " .. vim.inspect(v))
+      H.not_ok(vim.tbl_contains(names(root, c), "big.bin"), "a non-numeric cap must not lift the cap")
+      for _, v in ipairs({ 0, -1 }) do
+        LH.config.max_bytes = v
+        write(root .. "/a.txt", "v" .. tostring(v) .. "\n")
+        c = snap(root)
+        H.has(names(root, c), "big.bin", "cap disabled by " .. vim.inspect(v))
+      end
+      -- reset: new repo, numeric string
+      local root2 = mkrepo()
+      write(root2 .. "/big.bin", string.rep("x", 2 * MB))
+      LH.config.max_bytes = tostring(MB)
+      H.eq({ "a.txt" }, names(root2, snap(root2)), "numeric string cap")
     end
-    -- reset: new repo, numeric string
-    local root2 = mkrepo()
-    write(root2 .. "/big.bin", string.rep("x", 2 * MB))
-    LH.config.max_bytes = tostring(MB)
-    H.eq({ "a.txt" }, names(root2, snap(root2)), "numeric string cap")
-  end)
+  )
 
-  it("tracked files over the cap are still snapshotted; a file that grew past the cap leaves the private index", function()
-    LH.config.max_bytes = MB
-    local root = mkrepo({ ["a.txt"] = "a\n", ["tracked.bin"] = string.rep("t", 2 * MB) })
-    write(root .. "/grow.bin", "tiny\n")
-    local c1 = snap(root)
-    H.eq({ "a.txt", "grow.bin", "tracked.bin" }, names(root, c1))
-    write(root .. "/grow.bin", string.rep("g", 2 * MB))
-    local c2 = snap(root)
-    H.ok(c2, "a new commit (the file dropped out)")
-    H.eq({ "a.txt", "tracked.bin" }, names(root, c2))
-    H.ok(log_count("rm %-%-cached %-r %-q %-f %-%-ignore%-unmatch %-%- :%(literal%)grow%.bin") == 1, "git rm --cached ran")
-  end)
+  it(
+    "tracked files over the cap are still snapshotted; a file that grew past the cap leaves the private index",
+    function()
+      LH.config.max_bytes = MB
+      local root = mkrepo({ ["a.txt"] = "a\n", ["tracked.bin"] = string.rep("t", 2 * MB) })
+      write(root .. "/grow.bin", "tiny\n")
+      local c1 = snap(root)
+      H.eq({ "a.txt", "grow.bin", "tracked.bin" }, names(root, c1))
+      write(root .. "/grow.bin", string.rep("g", 2 * MB))
+      local c2 = snap(root)
+      H.ok(c2, "a new commit (the file dropped out)")
+      H.eq({ "a.txt", "tracked.bin" }, names(root, c2))
+      H.ok(
+        log_count("rm %-%-cached %-r %-q %-f %-%-ignore%-unmatch %-%- :%(literal%)grow%.bin") == 1,
+        "git rm --cached ran"
+      )
+    end
+  )
 end)
 
 describe("size budget of a whole snapshot (the max_total_bytes option)", function()
@@ -800,18 +854,21 @@ end)
 describe("size cap and tracked files", function()
   local MB = 1024 * 1024
 
-  it("a MODIFIED tracked file over the cap is left out of the snapshot (its blob would add its size each time)", function()
-    LH.config.max_bytes = MB
-    local root = mkrepo({ ["a.txt"] = "a\n", ["data.db"] = string.rep("t", 2 * MB) })
-    local c1 = snap(root)
-    H.eq({ "a.txt", "data.db" }, names(root, c1), "unchanged tracked file: same blob as HEAD, kept")
-    write(root .. "/data.db", "X" .. string.rep("t", 2 * MB - 1))
-    write(root .. "/a.txt", "a2\n")
-    local c2 = snap(root)
-    H.ok(c2)
-    H.eq({ "a.txt" }, names(root, c2))
-    H.eq(1, #note_matching("local history: skipping data.db"))
-  end)
+  it(
+    "a MODIFIED tracked file over the cap is left out of the snapshot (its blob would add its size each time)",
+    function()
+      LH.config.max_bytes = MB
+      local root = mkrepo({ ["a.txt"] = "a\n", ["data.db"] = string.rep("t", 2 * MB) })
+      local c1 = snap(root)
+      H.eq({ "a.txt", "data.db" }, names(root, c1), "unchanged tracked file: same blob as HEAD, kept")
+      write(root .. "/data.db", "X" .. string.rep("t", 2 * MB - 1))
+      write(root .. "/a.txt", "a2\n")
+      local c2 = snap(root)
+      H.ok(c2)
+      H.eq({ "a.txt" }, names(root, c2))
+      H.eq(1, #note_matching("local history: skipping data.db"))
+    end
+  )
 end)
 
 -- ---------------------------------------------------- 14. nested repos
@@ -854,7 +911,9 @@ describe("linked worktree", function()
     H.eq({}, vim.fn.glob(root .. "/.git/lochist-index*", true, true), "none in the main gitdir")
     local ex = vim.fn.readfile(root .. "/.git/info/exclude")
     H.eq("/target/", ex[#ex])
-    H.eq(1, #vim.tbl_filter(function(l) return l == "/target/" end, ex))
+    H.eq(1, #vim.tbl_filter(function(l)
+      return l == "/target/"
+    end, ex))
     -- the main worktree keeps its own ref
     write(root .. "/a.txt", "main side\n")
     H.ok(snap(root))
@@ -881,37 +940,43 @@ describe("content", function()
     fsck_clean(root)
   end)
 
-  it("README: snapshots accumulate until pruned; update-ref -d resets; shows in git log --all; push --mirror transfers it", function()
-    local root = mkrepo()
-    for i = 1, 4 do
-      write(root .. "/a.txt", "v" .. i .. "\n")
+  it(
+    "README: snapshots accumulate until pruned; update-ref -d resets; shows in git log --all; push --mirror transfers it",
+    function()
+      local root = mkrepo()
+      for i = 1, 4 do
+        write(root .. "/a.txt", "v" .. i .. "\n")
+        H.ok(snap(root))
+      end
+      H.eq(4, count(root, "refs/lochist/main"))
+      H.has(vim.split(G(root, "log", "--all", "--format=%s"), "\n", { plain = true }), "autosave")
+      local bare = H.tmpdir() .. "/remote.git"
+      G(root, "init", "-q", "--bare", bare)
+      G(root, "push", "-q", "--mirror", bare)
+      H.eq(tip(root, "refs/lochist/main"), tip(bare, "refs/lochist/main"), "push --mirror carries refs/lochist")
+      G(root, "update-ref", "-d", "refs/lochist/main")
+      H.is_nil(tip(root, "refs/lochist/main"))
+      write(root .. "/a.txt", "after reset\n")
       H.ok(snap(root))
+      H.eq(1, count(root, "refs/lochist/main"), "history starts over")
     end
-    H.eq(4, count(root, "refs/lochist/main"))
-    H.has(vim.split(G(root, "log", "--all", "--format=%s"), "\n", { plain = true }), "autosave")
-    local bare = H.tmpdir() .. "/remote.git"
-    G(root, "init", "-q", "--bare", bare)
-    G(root, "push", "-q", "--mirror", bare)
-    H.eq(tip(root, "refs/lochist/main"), tip(bare, "refs/lochist/main"), "push --mirror carries refs/lochist")
-    G(root, "update-ref", "-d", "refs/lochist/main")
-    H.is_nil(tip(root, "refs/lochist/main"))
-    write(root .. "/a.txt", "after reset\n")
-    H.ok(snap(root))
-    H.eq(1, count(root, "refs/lochist/main"), "history starts over")
-  end)
+  )
 
-  it("README: git restore --source=refs/lochist/<branch> --worktree -- <path> recovers a file without touching the index", function()
-    local root = mkrepo()
-    write(root .. "/a.txt", "precious\n")
-    H.ok(snap(root))
-    os.remove(root .. "/a.txt")
-    G(root, "status", "--porcelain")
-    local idx = read(root .. "/.git/index")
-    G(root, "restore", "--source=refs/lochist/main", "--worktree", "--", "a.txt")
-    H.eq("precious\n", read(root .. "/a.txt"))
-    H.eq(idx, read(root .. "/.git/index"), "index untouched")
-    G(root, "diff", "--cached", "--quiet")
-  end)
+  it(
+    "README: git restore --source=refs/lochist/<branch> --worktree -- <path> recovers a file without touching the index",
+    function()
+      local root = mkrepo()
+      write(root .. "/a.txt", "precious\n")
+      H.ok(snap(root))
+      os.remove(root .. "/a.txt")
+      G(root, "status", "--porcelain")
+      local idx = read(root .. "/.git/index")
+      G(root, "restore", "--source=refs/lochist/main", "--worktree", "--", "a.txt")
+      H.eq("precious\n", read(root .. "/a.txt"))
+      H.eq(idx, read(root .. "/.git/index"), "index untouched")
+      G(root, "diff", "--cached", "--quiet")
+    end
+  )
 end)
 
 -- --------------------------------- 9-10. throttle, timers, retry, watchdog
@@ -935,29 +1000,32 @@ describe("throttle and timers", function()
     H.is_nil(state("pending")[root])
   end)
 
-  it("a save inside the window arms ONE unref'd trailing timer for ~61 s that snapshots the last save's content", function()
-    local root = mkrepo()
-    H.ok(snap(root, { force = false }))
-    local c1 = tip(root, "refs/lochist/main")
-    timer_scale = 50
-    local before_news = timer_news
-    for i = 2, 4 do
-      write(root .. "/a.txt", "save " .. i .. "\n")
-      LH.snapshot({ path = root })
+  it(
+    "a save inside the window arms ONE unref'd trailing timer for ~61 s that snapshots the last save's content",
+    function()
+      local root = mkrepo()
+      H.ok(snap(root, { force = false }))
+      local c1 = tip(root, "refs/lochist/main")
+      timer_scale = 50
+      local before_news = timer_news
+      for i = 2, 4 do
+        write(root .. "/a.txt", "save " .. i .. "\n")
+        LH.snapshot({ path = root })
+      end
+      H.eq(1, timer_news - before_news, "one timer for three saves")
+      H.eq(1, #timer_starts)
+      H.ok(timer_starts[1] >= 59000 and timer_starts[1] <= 61000, "due in " .. timer_starts[1] .. " ms")
+      H.eq(false, state("timers")[root].real:has_ref(), "unref'd, never keeps nvim alive")
+      H.eq(c1, tip(root, "refs/lochist/main"))
+      H.wait_for(function()
+        return tip(root, "refs/lochist/main") ~= c1
+      end, 15000, "trailing snapshot")
+      H.eq("save 4\n", blob(root, "refs/lochist/main", "a.txt"))
+      H.is_nil(state("timers")[root])
+      H.is_nil(state("pending")[root])
+      H.eq(2, count(root, "refs/lochist/main"))
     end
-    H.eq(1, timer_news - before_news, "one timer for three saves")
-    H.eq(1, #timer_starts)
-    H.ok(timer_starts[1] >= 59000 and timer_starts[1] <= 61000, "due in " .. timer_starts[1] .. " ms")
-    H.eq(false, state("timers")[root].real:has_ref(), "unref'd, never keeps nvim alive")
-    H.eq(c1, tip(root, "refs/lochist/main"))
-    H.wait_for(function()
-      return tip(root, "refs/lochist/main") ~= c1
-    end, 15000, "trailing snapshot")
-    H.eq("save 4\n", blob(root, "refs/lochist/main", "a.txt"))
-    H.is_nil(state("timers")[root])
-    H.is_nil(state("pending")[root])
-    H.eq(2, count(root, "refs/lochist/main"))
-  end)
+  )
 
   it("a forced snapshot ignores the throttle window", function()
     local root = mkrepo()
@@ -1012,33 +1080,58 @@ describe("throttle and timers", function()
     local root = mkrepo()
     fake("commit-tree", "slowonce:1")
     local a_commit, b_commit, a_done, b_done
-    LH.snapshot({ path = root, force = true, done = function(c) a_commit, a_done = c, true end })
+    LH.snapshot({
+      path = root,
+      force = true,
+      done = function(c)
+        a_commit, a_done = c, true
+      end,
+    })
     wait_pidfile("commit-tree")
     write(root .. "/a.txt", "second\n")
-    LH.snapshot({ path = root, force = true, done = function(c) b_commit, b_done = c, true end })
+    LH.snapshot({
+      path = root,
+      force = true,
+      done = function(c)
+        b_commit, b_done = c, true
+      end,
+    })
     H.has(deferred, 500)
     H.not_ok(b_done, "not run yet")
     H.is_nil(state("pending")[root], "a forced one does not go through pending")
-    H.wait_for(function() return a_done and b_done end, 20000, "both snapshots")
+    H.wait_for(function()
+      return a_done and b_done
+    end, 20000, "both snapshots")
     H.ok(a_commit and b_commit and a_commit ~= b_commit)
     H.eq(a_commit, G(root, "rev-parse", b_commit .. "^"))
     H.eq("second\n", blob(root, b_commit, "a.txt"))
   end)
 
-  it("a non-forced snapshot that finds another running marks pending; the timer is armed when that one ends, for the full throttle (it forced a second commit ~1 s later)", function()
-    local root = mkrepo()
-    fake("commit-tree", "slowonce:1")
-    local done
-    LH.snapshot({ path = root, force = true, done = function() done = true end })
-    wait_pidfile("commit-tree")
-    LH.snapshot({ path = root })
-    H.eq(true, state("pending")[root])
-    H.is_nil(state("timers")[root], "not armed while the snapshot runs")
-    H.wait_for(function() return done end, 20000, "first snapshot")
-    H.ok(state("timers")[root], "armed by finish()")
-    local last_start = timer_starts[#timer_starts]
-    H.ok(last_start >= 59000 and last_start <= 61000, "due in " .. tostring(last_start) .. " ms, after the throttle")
-  end)
+  it(
+    "a non-forced snapshot that finds another running marks pending; the timer is armed when that one ends, for the full throttle (it forced a second commit ~1 s later)",
+    function()
+      local root = mkrepo()
+      fake("commit-tree", "slowonce:1")
+      local done
+      LH.snapshot({
+        path = root,
+        force = true,
+        done = function()
+          done = true
+        end,
+      })
+      wait_pidfile("commit-tree")
+      LH.snapshot({ path = root })
+      H.eq(true, state("pending")[root])
+      H.is_nil(state("timers")[root], "not armed while the snapshot runs")
+      H.wait_for(function()
+        return done
+      end, 20000, "first snapshot")
+      H.ok(state("timers")[root], "armed by finish()")
+      local last_start = timer_starts[#timer_starts]
+      H.ok(last_start >= 59000 and last_start <= 61000, "due in " .. tostring(last_start) .. " ms, after the throttle")
+    end
+  )
 
   it("the 30 s watchdog aborts a hung git (kills the child), clears the running state, done fires once", function()
     local root = mkrepo()
@@ -1046,14 +1139,24 @@ describe("throttle and timers", function()
     fake("add", "hang")
     local calls = 0
     local commit
-    LH.snapshot({ path = root, force = true, done = function(c) calls, commit = calls + 1, c end })
+    LH.snapshot({
+      path = root,
+      force = true,
+      done = function(c)
+        calls, commit = calls + 1, c
+      end,
+    })
     local pid = wait_pidfile("add")
     H.ok(pid_alive(pid), "git is hanging")
     H.eq(true, state("running")[root])
-    H.wait_for(function() return calls > 0 end, 10000, "watchdog")
+    H.wait_for(function()
+      return calls > 0
+    end, 10000, "watchdog")
     H.has(deferred, 30000, "watchdog armed for 30 s")
     H.is_nil(commit)
-    H.wait_for(function() return not pid_alive(pid) end, 5000, "hung git killed")
+    H.wait_for(function()
+      return not pid_alive(pid)
+    end, 5000, "hung git killed")
     H.is_nil(state("running")[root])
     H.is_nil(state("runs")[root])
     vim.wait(600)
@@ -1135,81 +1238,87 @@ describe("locks and failures", function()
     H.is_nil(tip(root, "refs/lochist/main"))
   end)
 
-  it("moves the ref with compare-and-swap (update-ref <ref> <new> <old>) and rebuilds the tree after reading the parent", function()
-    local root = mkrepo()
-    local c1 = snap(root)
-    write(root .. "/a.txt", "two\n")
-    local c2 = snap(root)
-    local first, second
-    for _, l in ipairs(fake_log()) do
-      local args = l:match("^[^\t]*\t(update%-ref refs/lochist/main .*)$")
-      if args then
-        if not first then
-          first = args
-        else
-          second = args
+  it(
+    "moves the ref with compare-and-swap (update-ref <ref> <new> <old>) and rebuilds the tree after reading the parent",
+    function()
+      local root = mkrepo()
+      local c1 = snap(root)
+      write(root .. "/a.txt", "two\n")
+      local c2 = snap(root)
+      local first, second
+      for _, l in ipairs(fake_log()) do
+        local args = l:match("^[^\t]*\t(update%-ref refs/lochist/main .*)$")
+        if args then
+          if not first then
+            first = args
+          else
+            second = args
+          end
         end
       end
-    end
-    H.eq(("update-ref refs/lochist/main %s "):format(c1), first, "first: old value empty")
-    H.eq(("update-ref refs/lochist/main %s %s"):format(c2, c1), second)
-    -- order: the parent is read (rev-parse -q --verify ref) before add runs
-    local ver, add
-    for i, l in ipairs(fake_log()) do
-      if not ver and l:find("rev-parse -q --verify refs/lochist/main", 1, true) then
-        ver = i
+      H.eq(("update-ref refs/lochist/main %s "):format(c1), first, "first: old value empty")
+      H.eq(("update-ref refs/lochist/main %s %s"):format(c2, c1), second)
+      -- order: the parent is read (rev-parse -q --verify ref) before add runs
+      local ver, add
+      for i, l in ipairs(fake_log()) do
+        if not ver and l:find("rev-parse -q --verify refs/lochist/main", 1, true) then
+          ver = i
+        end
+        if not add and l:find("\tadd ", 1, true) then
+          add = i
+        end
       end
-      if not add and l:find("\tadd ", 1, true) then
-        add = i
-      end
+      H.ok(ver and add and ver < add, "parent read before the tree is built")
     end
-    H.ok(ver and add and ver < add, "parent read before the tree is built")
-  end)
+  )
 end)
 
 -- ------------------------------------------------------- 17. stale indexes
 
 describe("stale index files", function()
-  it("deletes leftovers of dead pids (and .lock) and the old shared index, seeds ours from the newest, spares a live pid", function()
-    local root = mkrepo({ ["a.txt"] = "a\n" })
-    local gd = root .. "/.git"
-    local function dead_pid()
-      local o = vim.system({ "true" })
-      local pid = o.pid
-      o:wait()
-      return pid
+  it(
+    "deletes leftovers of dead pids (and .lock) and the old shared index, seeds ours from the newest, spares a live pid",
+    function()
+      local root = mkrepo({ ["a.txt"] = "a\n" })
+      local gd = root .. "/.git"
+      local function dead_pid()
+        local o = vim.system({ "true" })
+        local pid = o.pid
+        o:wait()
+        return pid
+      end
+      local da, db = dead_pid(), dead_pid()
+      local live = H.spawn({ "sleep", "120" })
+      local function mkindex(path)
+        local r = vim.system({ REAL_GIT, "add", "-A" }, { cwd = root, env = { GIT_INDEX_FILE = path } }):wait(30000)
+        H.eq(0, r.code, r.stderr)
+      end
+      local A, B = gd .. "/lochist-index." .. da, gd .. "/lochist-index." .. db
+      mkindex(A)
+      write(root .. "/b.txt", "b\n")
+      mkindex(B)
+      os.remove(root .. "/b.txt")
+      local shared, livep = gd .. "/lochist-index", gd .. "/lochist-index." .. live.pid
+      vim.fn.writefile(vim.fn.readfile(A, "b"), shared, "b")
+      vim.fn.writefile(vim.fn.readfile(A, "b"), livep, "b")
+      write(B .. ".lock", "")
+      local now = os.time()
+      uv.fs_utime(A, now - 200, now - 200)
+      uv.fs_utime(shared, now - 100, now - 100)
+      uv.fs_utime(livep, now - 300, now - 300)
+      uv.fs_utime(B, now - 10, now - 10)
+      local b_bytes, live_bytes = read(B), read(livep)
+      fake("add", "snapindex")
+      H.ok(snap(root))
+      H.is_nil(uv.fs_stat(A))
+      H.is_nil(uv.fs_stat(B))
+      H.is_nil(uv.fs_stat(B .. ".lock"))
+      H.is_nil(uv.fs_stat(shared), "old shared index removed")
+      H.eq(live_bytes, read(livep), "a live pid's index is left alone")
+      H.eq(b_bytes, read(ctl .. "/index-before"), "our index was seeded with the newest leftover")
+      H.ok(uv.fs_stat(gd .. "/lochist-index." .. uv.os_getpid()))
     end
-    local da, db = dead_pid(), dead_pid()
-    local live = H.spawn({ "sleep", "120" })
-    local function mkindex(path)
-      local r = vim.system({ REAL_GIT, "add", "-A" }, { cwd = root, env = { GIT_INDEX_FILE = path } }):wait(30000)
-      H.eq(0, r.code, r.stderr)
-    end
-    local A, B = gd .. "/lochist-index." .. da, gd .. "/lochist-index." .. db
-    mkindex(A)
-    write(root .. "/b.txt", "b\n")
-    mkindex(B)
-    os.remove(root .. "/b.txt")
-    local shared, livep = gd .. "/lochist-index", gd .. "/lochist-index." .. live.pid
-    vim.fn.writefile(vim.fn.readfile(A, "b"), shared, "b")
-    vim.fn.writefile(vim.fn.readfile(A, "b"), livep, "b")
-    write(B .. ".lock", "")
-    local now = os.time()
-    uv.fs_utime(A, now - 200, now - 200)
-    uv.fs_utime(shared, now - 100, now - 100)
-    uv.fs_utime(livep, now - 300, now - 300)
-    uv.fs_utime(B, now - 10, now - 10)
-    local b_bytes, live_bytes = read(B), read(livep)
-    fake("add", "snapindex")
-    H.ok(snap(root))
-    H.is_nil(uv.fs_stat(A))
-    H.is_nil(uv.fs_stat(B))
-    H.is_nil(uv.fs_stat(B .. ".lock"))
-    H.is_nil(uv.fs_stat(shared), "old shared index removed")
-    H.eq(live_bytes, read(livep), "a live pid's index is left alone")
-    H.eq(b_bytes, read(ctl .. "/index-before"), "our index was seeded with the newest leftover")
-    H.ok(uv.fs_stat(gd .. "/lochist-index." .. uv.os_getpid()))
-  end)
+  )
 end)
 
 -- --------------------------------------------- 12 + 15. child nvim processes
@@ -1254,7 +1363,11 @@ local function child(root, mode, env)
   if not uv.fs_stat(script) then
     write(script, child_script)
   end
-  local e = vim.tbl_extend("force", { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_MODE = mode, XYNO_EXIT_MODE = "sync" }, env or {})
+  local e = vim.tbl_extend(
+    "force",
+    { XYNO_REPO = H.repo, XYNO_ROOT = root, XYNO_MODE = mode, XYNO_EXIT_MODE = "sync" },
+    env or {}
+  )
   return vim.system(
     { vim.v.progpath, "--headless", "-u", "NONE", "-i", "NONE", "-n", "-c", "luafile " .. script },
     { env = e, text = true }
@@ -1274,29 +1387,32 @@ describe("exit and concurrency (child nvim processes)", function()
     H.eq("autosave", subject(root, "refs/lochist/main"))
   end)
 
-  it("exit_mode = background (the default): the same two cases, recorded by the detached worker after nvim is gone", function()
-    local root = mkrepo()
-    local r = child(root, "pending", { XYNO_EXIT_MODE = "" }):wait(30000)
-    H.eq(0, r.code, r.stderr)
-    H.wait_for(function()
-      return blob(root, "refs/lochist/main", "f.txt") == "final\n"
-    end, 20000, "the worker recorded the final content")
-    H.eq(1, count(root, "refs/lochist/main"), "one snapshot")
-    H.wait_for(function()
-      return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root })) == ""
-    end, 20000, "worker gone")
+  it(
+    "exit_mode = background (the default): the same two cases, recorded by the detached worker after nvim is gone",
+    function()
+      local root = mkrepo()
+      local r = child(root, "pending", { XYNO_EXIT_MODE = "" }):wait(30000)
+      H.eq(0, r.code, r.stderr)
+      H.wait_for(function()
+        return blob(root, "refs/lochist/main", "f.txt") == "final\n"
+      end, 20000, "the worker recorded the final content")
+      H.eq(1, count(root, "refs/lochist/main"), "one snapshot")
+      H.wait_for(function()
+        return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root })) == ""
+      end, 20000, "worker gone")
 
-    local root2 = mkrepo()
-    fake("commit-tree", "slowonce:3")
-    local r2 = child(root2, "inflight", { XYNO_EXIT_MODE = "" }):wait(30000)
-    H.eq(0, r2.code, r2.stderr)
-    H.wait_for(function()
-      return blob(root2, "refs/lochist/main", "f.txt") == "v1\n"
-    end, 20000, "the worker redid the in-flight snapshot")
-    H.wait_for(function()
-      return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root2 })) == ""
-    end, 20000, "worker gone")
-  end)
+      local root2 = mkrepo()
+      fake("commit-tree", "slowonce:3")
+      local r2 = child(root2, "inflight", { XYNO_EXIT_MODE = "" }):wait(30000)
+      H.eq(0, r2.code, r2.stderr)
+      H.wait_for(function()
+        return blob(root2, "refs/lochist/main", "f.txt") == "v1\n"
+      end, 20000, "the worker redid the in-flight snapshot")
+      H.wait_for(function()
+        return vim.trim(vim.fn.system({ "pgrep", "-f", "exit_worker.lua " .. root2 })) == ""
+      end, 20000, "worker gone")
+    end
+  )
 
   it("quitting with a snapshot in flight kills the running git and redoes it synchronously", function()
     local root = mkrepo()
@@ -1308,44 +1424,49 @@ describe("exit and concurrency (child nvim processes)", function()
     H.ok(ms < 2900, ("nvim waited for the slow git (%d ms)"):format(ms))
     local pid = tonumber(read(ctl .. "/commit-tree.pid"))
     H.ok(pid, "the slow git ran")
-    H.wait_for(function() return not pid_alive(pid) end, 4000, "in-flight git killed")
+    H.wait_for(function()
+      return not pid_alive(pid)
+    end, 4000, "in-flight git killed")
     H.eq("v1\n", blob(root, "refs/lochist/main", "f.txt"))
     H.eq(1, count(root, "refs/lochist/main"))
   end)
 
-  it("6 concurrent nvims x 3 snapshots: compare-and-swap loses no snapshot, every reported commit is on the ref", function()
-    -- NOTE: not "18 commits" strictly: a snapshot whose tree an earlier racer's commit already contains
-    -- (it saw the file in its own `git add`) is a legitimate no-op (done(nil)), so the count depends on timing.
-    local root = mkrepo()
-    local procs = {}
-    for id = 1, 6 do
-      procs[id] = child(root, "concurrent", { XYNO_ID = tostring(id), XYNO_OUT = base .. "/out" .. id .. ".txt" })
-    end
-    for id, p in ipairs(procs) do
-      local r = p:wait(100000)
-      H.eq(0, r.code, ("child %d: %s%s"):format(id, r.stdout or "", r.stderr or ""))
-    end
-    local seen, nils = {}, 0
-    for id = 1, 6 do
-      local lines = vim.fn.readfile(base .. "/out" .. id .. ".txt")
-      H.eq(3, #lines)
-      for _, c in ipairs(lines) do
-        if c == "nil" then
-          nils = nils + 1
-        else
-          seen[c] = true
+  it(
+    "6 concurrent nvims x 3 snapshots: compare-and-swap loses no snapshot, every reported commit is on the ref",
+    function()
+      -- NOTE: not "18 commits" strictly: a snapshot whose tree an earlier racer's commit already contains
+      -- (it saw the file in its own `git add`) is a legitimate no-op (done(nil)), so the count depends on timing.
+      local root = mkrepo()
+      local procs = {}
+      for id = 1, 6 do
+        procs[id] = child(root, "concurrent", { XYNO_ID = tostring(id), XYNO_OUT = base .. "/out" .. id .. ".txt" })
+      end
+      for id, p in ipairs(procs) do
+        local r = p:wait(100000)
+        H.eq(0, r.code, ("child %d: %s%s"):format(id, r.stdout or "", r.stderr or ""))
+      end
+      local seen, nils = {}, 0
+      for id = 1, 6 do
+        local lines = vim.fn.readfile(base .. "/out" .. id .. ".txt")
+        H.eq(3, #lines)
+        for _, c in ipairs(lines) do
+          if c == "nil" then
+            nils = nils + 1
+          else
+            seen[c] = true
+          end
         end
       end
+      local n = count(root, "refs/lochist/main")
+      H.eq(n, vim.tbl_count(seen), "every commit on the ref was reported by exactly one snapshot")
+      H.ok(n >= 3 and n <= 18, "commits: " .. n .. " (no-ops: " .. nils .. ")")
+      H.eq(18, n + nils, "each of the 18 snapshots either committed or found its content already recorded")
+      H.eq("", G(root, "rev-list", "--merges", "refs/lochist/main"), "one linear chain")
+      local files = names(root, "refs/lochist/main")
+      H.eq(19, #files, "a.txt + all 18 files are in the tip: nothing was overwritten")
+      fsck_clean(root)
     end
-    local n = count(root, "refs/lochist/main")
-    H.eq(n, vim.tbl_count(seen), "every commit on the ref was reported by exactly one snapshot")
-    H.ok(n >= 3 and n <= 18, "commits: " .. n .. " (no-ops: " .. nils .. ")")
-    H.eq(18, n + nils, "each of the 18 snapshots either committed or found its content already recorded")
-    H.eq("", G(root, "rev-list", "--merges", "refs/lochist/main"), "one linear chain")
-    local files = names(root, "refs/lochist/main")
-    H.eq(19, #files, "a.txt + all 18 files are in the tip: nothing was overwritten")
-    fsck_clean(root)
-  end)
+  )
 end)
 
 -- ------------------------------------------------ 21-22. browse and restore
@@ -1362,30 +1483,38 @@ local function history(root, rel, versions)
 end
 
 describe(":LocalHistory", function()
-  it("lists the snapshots of the current file (newest first, '<age>  <message>') and opens a vertical scratch diff", function()
-    local root = mkrepo({ ["notes.txt"] = "base\n" })
-    history(root, "notes.txt", { "v1\n", "v2\n", "v3\n" })
-    open_file(root, "notes.txt")
-    local origwin = vim.api.nvim_get_current_win()
-    mock_select(select_nth(2))
-    vim.cmd("LocalHistory")
-    H.wait_for(function() return vim.api.nvim_buf_get_name(0):find("notes.txt@", 1, true) end, 15000, "scratch buffer")
-    H.eq(1, #sel_calls)
-    local c = sel_calls[1]
-    H.eq("Local history: notes.txt", c.opts.prompt)
-    H.eq(3, #c.items)
-    H.match(c.opts.format_item(c.items[1]), "ago  autosave", true)
-    local h2 = hash_of(c.items[2])
-    H.eq(G(root, "rev-list", "--max-count=3", "refs/lochist/main"), table.concat({ hash_of(c.items[1]), h2, hash_of(c.items[3]) }, "\n"))
-    H.match(vim.api.nvim_buf_get_name(0), "notes.txt@" .. h2:sub(1, 8) .. "$")
-    H.eq("nofile", vim.bo.buftype)
-    H.eq("wipe", vim.bo.bufhidden)
-    H.eq(false, vim.bo.swapfile)
-    H.eq(vim.filetype.match({ filename = root .. "/notes.txt" }) or "", vim.bo.filetype)
-    H.eq({ "v2" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
-    H.eq("row", vim.fn.winlayout()[1], "vertical split")
-    H.ok(vim.wo.diff and vim.wo[origwin].diff, "both windows in diff mode")
-  end)
+  it(
+    "lists the snapshots of the current file (newest first, '<age>  <message>') and opens a vertical scratch diff",
+    function()
+      local root = mkrepo({ ["notes.txt"] = "base\n" })
+      history(root, "notes.txt", { "v1\n", "v2\n", "v3\n" })
+      open_file(root, "notes.txt")
+      local origwin = vim.api.nvim_get_current_win()
+      mock_select(select_nth(2))
+      vim.cmd("LocalHistory")
+      H.wait_for(function()
+        return vim.api.nvim_buf_get_name(0):find("notes.txt@", 1, true)
+      end, 15000, "scratch buffer")
+      H.eq(1, #sel_calls)
+      local c = sel_calls[1]
+      H.eq("Local history: notes.txt", c.opts.prompt)
+      H.eq(3, #c.items)
+      H.match(c.opts.format_item(c.items[1]), "ago  autosave", true)
+      local h2 = hash_of(c.items[2])
+      H.eq(
+        G(root, "rev-list", "--max-count=3", "refs/lochist/main"),
+        table.concat({ hash_of(c.items[1]), h2, hash_of(c.items[3]) }, "\n")
+      )
+      H.match(vim.api.nvim_buf_get_name(0), "notes.txt@" .. h2:sub(1, 8) .. "$")
+      H.eq("nofile", vim.bo.buftype)
+      H.eq("wipe", vim.bo.bufhidden)
+      H.eq(false, vim.bo.swapfile)
+      H.eq(vim.filetype.match({ filename = root .. "/notes.txt" }) or "", vim.bo.filetype)
+      H.eq({ "v2" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
+      H.eq("row", vim.fn.winlayout()[1], "vertical split")
+      H.ok(vim.wo.diff and vim.wo[origwin].diff, "both windows in diff mode")
+    end
+  )
 
   it("lists at most 100 snapshots", function()
     local root = mkrepo({ ["notes.txt"] = "base\n" })
@@ -1395,9 +1524,13 @@ describe(":LocalHistory", function()
     end
     chain(root, "refs/lochist/main", items, "notes.txt")
     open_file(root, "notes.txt")
-    mock_select(function() return nil end)
+    mock_select(function()
+      return nil
+    end)
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #sel_calls > 0 end, 15000, "picker")
+    H.wait_for(function()
+      return #sel_calls > 0
+    end, 15000, "picker")
     H.eq(100, #sel_calls[1].items)
   end)
 
@@ -1407,9 +1540,13 @@ describe(":LocalHistory", function()
     os.remove(root .. "/notes.txt")
     H.ok(snap(root))
     open_file(root, "notes.txt")
-    mock_select(function() return nil end)
+    mock_select(function()
+      return nil
+    end)
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #sel_calls > 0 end, 15000, "picker")
+    H.wait_for(function()
+      return #sel_calls > 0
+    end, 15000, "picker")
     H.eq(2, #sel_calls[1].items)
   end)
 
@@ -1426,16 +1563,22 @@ describe(":LocalHistory", function()
     local root = mkrepo({ ["sub/f.txt"] = "x\n" })
     open_file(root, "sub/f.txt")
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #notes > 0 end, 15000, "notice")
+    H.wait_for(function()
+      return #notes > 0
+    end, 15000, "notice")
     H.eq({ { msg = "no local history for sub/f.txt", level = vim.log.levels.INFO } }, notes)
     -- history exists, but not for this file
     write(root .. "/other.txt", "o\n")
     H.ok(snap(root))
     write(root .. "/sub/f.txt", "x\n") -- unchanged content: not in the log of the file beyond the first snapshot
     notes = {}
-    mock_select(function() return nil end)
+    mock_select(function()
+      return nil
+    end)
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #sel_calls > 0 end, 15000, "picker")
+    H.wait_for(function()
+      return #sel_calls > 0
+    end, 15000, "picker")
   end)
 
   it("a detached HEAD lists its own ref and the legacy refs/lochist/detached", function()
@@ -1445,9 +1588,13 @@ describe(":LocalHistory", function()
     write(root .. "/f.txt", "now\n")
     H.ok(snap(root))
     open_file(root, "f.txt")
-    mock_select(function() return nil end)
+    mock_select(function()
+      return nil
+    end)
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #sel_calls > 0 end, 15000, "picker")
+    H.wait_for(function()
+      return #sel_calls > 0
+    end, 15000, "picker")
     H.eq(2, #sel_calls[1].items)
     local msgs = {}
     for _, it in ipairs(sel_calls[1].items) do
@@ -1476,7 +1623,9 @@ describe(":LocalHistoryRestore", function()
       return 1 -- Restore
     end)
     vim.cmd("LocalHistoryRestore")
-    H.wait_for(function() return #notes > 0 end, 15000, "restore notice")
+    H.wait_for(function()
+      return #notes > 0
+    end, 15000, "restore notice")
     local h = hash_of(sel_calls[1].items[3]):sub(1, 8)
     H.eq({ "Restore", "Cancel" }, sel_calls[2].items)
     H.eq(("Replace notes.txt with snapshot %s? (undo with u)"):format(h), sel_calls[2].opts.prompt)
@@ -1497,7 +1646,9 @@ describe(":LocalHistoryRestore", function()
       return n == 1 and 3 or 2
     end)
     vim.cmd("LocalHistoryRestore")
-    H.wait_for(function() return #sel_calls >= 2 end, 15000, "second prompt")
+    H.wait_for(function()
+      return #sel_calls >= 2
+    end, 15000, "second prompt")
     vim.wait(100)
     H.eq({ "v3" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
     H.eq(false, vim.bo[buf].modified)
@@ -1515,13 +1666,17 @@ describe(":LocalHistoryRestore", function()
       return 1
     end)
     vim.cmd("LocalHistoryRestore")
-    H.wait_for(function() return #notes > 0 end, 15000, "warning")
+    H.wait_for(function()
+      return #notes > 0
+    end, 15000, "warning")
     H.eq({ { msg = "file did not exist in that snapshot", level = vim.log.levels.WARN } }, notes)
     H.eq(1, #sel_calls, "no Restore prompt")
     -- the same through :LocalHistory
     notes = {}
     vim.cmd("LocalHistory")
-    H.wait_for(function() return #notes > 0 end, 15000, "warning from browse")
+    H.wait_for(function()
+      return #notes > 0
+    end, 15000, "warning from browse")
     H.eq("file did not exist in that snapshot", notes[1].msg)
   end)
 end)
@@ -1536,8 +1691,12 @@ local function prune(root, arg, bang)
   vim.cmd("LocalHistoryPrune" .. (bang and "! " or " ") .. (arg or ""))
   H.wait_for(function()
     for _, n in ipairs(notes) do
-      if n.msg:find("git gc done", 1, true) or n.msg:find("git gc failed", 1, true) or n.msg:find("nothing to prune", 1, true)
-        or n.msg:find("usage:", 1, true) then
+      if
+        n.msg:find("git gc done", 1, true)
+        or n.msg:find("git gc failed", 1, true)
+        or n.msg:find("nothing to prune", 1, true)
+        or n.msg:find("usage:", 1, true)
+      then
         return true
       end
     end
@@ -1553,47 +1712,54 @@ local function six(root)
 end
 
 describe(":LocalHistoryPrune", function()
-  it("N keeps the newest N per branch: 6 commits with 2 keeps 2, with 1 keeps 1; trees, messages, dates unchanged; fsck clean", function()
-    local root = mkrepo()
-    six(root)
-    local before = vim.split(G(root, "log", "--format=%T|%s|%ct|%H", "refs/lochist/main"), "\n", { plain = true })
-    local old_tip = tip(root, "refs/lochist/main")
-    prune(root, "2")
-    H.eq(2, count(root, "refs/lochist/main"))
-    local after = vim.split(G(root, "log", "--format=%T|%s|%ct|%H", "refs/lochist/main"), "\n", { plain = true })
-    for i = 1, 2 do
-      local bt, bs, bc = before[i]:match("^(%x+)|(.-)|(%d+)|")
-      local at, as, ac = after[i]:match("^(%x+)|(.-)|(%d+)|")
-      H.eq({ bt, bs, bc }, { at, as, ac }, "kept snapshot " .. i)
-    end
-    H.eq(1, #vim.split(G(root, "rev-list", "--max-parents=0", "refs/lochist/main"), "\n", { plain = true }), "re-rooted")
-    H.is_nil(tip(root, "refs/xyno-history-prune"), "temp ref deleted")
-    H.ok(note_matching("local history: dropped 4 of 6 snapshots")[1])
-    fsck_clean(root)
-    -- same call order as documented
-    local order = {}
-    for _, l in ipairs(fake_log()) do
-      local a = l:match("^[^\t]*\t(.*)$")
-      if a:find("^fast%-import") then
-        order[#order + 1] = "fast-import"
-      elseif a:find("rev-parse refs/xyno-history-prune", 1, true) then
-        order[#order + 1] = "rev-parse"
-      elseif a:find("^update%-ref refs/lochist/main %x+ " .. old_tip) then
-        order[#order + 1] = "update-ref-cas"
-        H.eq(tip(root, "refs/lochist/main"), a:match("^update%-ref refs/lochist/main (%x+)"))
-      elseif a:find("update-ref -d refs/xyno-history-prune", 1, true) then
-        order[#order + 1] = "delete-temp"
-      elseif a:find("^gc ") then
-        order[#order + 1] = "gc " .. a
+  it(
+    "N keeps the newest N per branch: 6 commits with 2 keeps 2, with 1 keeps 1; trees, messages, dates unchanged; fsck clean",
+    function()
+      local root = mkrepo()
+      six(root)
+      local before = vim.split(G(root, "log", "--format=%T|%s|%ct|%H", "refs/lochist/main"), "\n", { plain = true })
+      local old_tip = tip(root, "refs/lochist/main")
+      prune(root, "2")
+      H.eq(2, count(root, "refs/lochist/main"))
+      local after = vim.split(G(root, "log", "--format=%T|%s|%ct|%H", "refs/lochist/main"), "\n", { plain = true })
+      for i = 1, 2 do
+        local bt, bs, bc = before[i]:match("^(%x+)|(.-)|(%d+)|")
+        local at, as, ac = after[i]:match("^(%x+)|(.-)|(%d+)|")
+        H.eq({ bt, bs, bc }, { at, as, ac }, "kept snapshot " .. i)
       end
+      H.eq(
+        1,
+        #vim.split(G(root, "rev-list", "--max-parents=0", "refs/lochist/main"), "\n", { plain = true }),
+        "re-rooted"
+      )
+      H.is_nil(tip(root, "refs/xyno-history-prune"), "temp ref deleted")
+      H.ok(note_matching("local history: dropped 4 of 6 snapshots")[1])
+      fsck_clean(root)
+      -- same call order as documented
+      local order = {}
+      for _, l in ipairs(fake_log()) do
+        local a = l:match("^[^\t]*\t(.*)$")
+        if a:find("^fast%-import") then
+          order[#order + 1] = "fast-import"
+        elseif a:find("rev-parse refs/xyno-history-prune", 1, true) then
+          order[#order + 1] = "rev-parse"
+        elseif a:find("^update%-ref refs/lochist/main %x+ " .. old_tip) then
+          order[#order + 1] = "update-ref-cas"
+          H.eq(tip(root, "refs/lochist/main"), a:match("^update%-ref refs/lochist/main (%x+)"))
+        elseif a:find("update-ref -d refs/xyno-history-prune", 1, true) then
+          order[#order + 1] = "delete-temp"
+        elseif a:find("^gc ") then
+          order[#order + 1] = "gc " .. a
+        end
+      end
+      H.eq({ "fast-import", "rev-parse", "update-ref-cas", "delete-temp", "gc gc --quiet --prune=1.hour.ago" }, order)
+      -- and with 1
+      prune(root, "1")
+      H.eq(1, count(root, "refs/lochist/main"))
+      H.eq("snap6", subject(root, "refs/lochist/main"))
+      fsck_clean(root)
     end
-    H.eq({ "fast-import", "rev-parse", "update-ref-cas", "delete-temp", "gc gc --quiet --prune=1.hour.ago" }, order)
-    -- and with 1
-    prune(root, "1")
-    H.eq(1, count(root, "refs/lochist/main"))
-    H.eq("snap6", subject(root, "refs/lochist/main"))
-    fsck_clean(root)
-  end)
+  )
 
   it("Nd keeps the last N days (default 30d); at least the newest always stays", function()
     local root = mkrepo()
@@ -1634,7 +1800,11 @@ describe(":LocalHistoryPrune", function()
   it("says 'nothing to prune (N snapshots)' when nothing is dropped; counts all lochist refs", function()
     local root = mkrepo()
     chain(root, "refs/lochist/main", { { days = 1, content = "1\n" }, { days = 0, content = "2\n" } })
-    chain(root, "refs/lochist/foo%2Fbar", { { days = 3, content = "1\n" }, { days = 2, content = "2\n" }, { days = 1, content = "3\n" } })
+    chain(
+      root,
+      "refs/lochist/foo%2Fbar",
+      { { days = 3, content = "1\n" }, { days = 2, content = "2\n" }, { days = 1, content = "3\n" } }
+    )
     prune(root, "10")
     H.eq("local history: nothing to prune (5 snapshots)", notes[1].msg)
     H.eq(0, log_count("^[^\t]*\tgc "))
@@ -1644,17 +1814,20 @@ describe(":LocalHistoryPrune", function()
     H.eq(1, count(root, "refs/lochist/foo%2Fbar"))
   end)
 
-  it("a ref that moved meanwhile makes the update-ref fail: 'could not prune', ref untouched, temp ref removed", function()
-    local root = mkrepo()
-    six(root)
-    local t = tip(root, "refs/lochist/main")
-    fake("update-ref", "failif:refs/lochist/main")
-    prune(root, "2")
-    H.ok(note_matching("local history: could not prune refs/lochist/main")[1], vim.inspect(notes))
-    H.eq(t, tip(root, "refs/lochist/main"))
-    os.remove(ctl .. "/update-ref")
-    H.is_nil(tip(root, "refs/xyno-history-prune"))
-  end)
+  it(
+    "a ref that moved meanwhile makes the update-ref fail: 'could not prune', ref untouched, temp ref removed",
+    function()
+      local root = mkrepo()
+      six(root)
+      local t = tip(root, "refs/lochist/main")
+      fake("update-ref", "failif:refs/lochist/main")
+      prune(root, "2")
+      H.ok(note_matching("local history: could not prune refs/lochist/main")[1], vim.inspect(notes))
+      H.eq(t, tip(root, "refs/lochist/main"))
+      os.remove(ctl .. "/update-ref")
+      H.is_nil(tip(root, "refs/xyno-history-prune"))
+    end
+  )
 
   it("! uses --prune=now and frees the space of a big deleted blob", function()
     local root = mkrepo()
@@ -1700,37 +1873,56 @@ end)
 -- --------------------------------------------------- 26. autosave event
 
 describe("auto-save integration", function()
-  it("User AutoSaveWritePost snapshots only when the buffer is no longer modified (a refused write leaves none)", function()
-    local root = mkrepo()
-    local buf = open_file(root, "a.txt")
-    -- refused write (disk_guard): still modified -> no snapshot
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "unsaved" })
-    H.eq(true, vim.bo[buf].modified)
-    vim.api.nvim_exec_autocmds("User", { pattern = "AutoSaveWritePost", data = { saved_buffer = buf } })
-    vim.wait(700)
-    H.is_nil(tip(root, "refs/lochist/main"))
-    H.eq(0, log_count("\tadd "))
-    -- written: snapshot (content of the disk file)
-    write(root .. "/a.txt", "on disk\n")
-    vim.cmd("silent! checktime")
-    vim.api.nvim_buf_call(buf, function()
-      vim.cmd("silent! edit!")
-    end)
-    H.eq(false, vim.bo[buf].modified)
-    vim.api.nvim_exec_autocmds("User", { pattern = "AutoSaveWritePost", data = { saved_buffer = buf } })
-    H.wait_for(function() return tip(root, "refs/lochist/main") end, 15000, "snapshot")
-    H.eq("on disk\n", blob(root, "refs/lochist/main", "a.txt"))
-    -- no data / invalid buffer: no error
-    H.ok(pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "AutoSaveWritePost" }))
-    H.ok(pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "AutoSaveWritePost", data = { saved_buffer = 99999 } }))
-  end)
+  it(
+    "User AutoSaveWritePost snapshots only when the buffer is no longer modified (a refused write leaves none)",
+    function()
+      local root = mkrepo()
+      local buf = open_file(root, "a.txt")
+      -- refused write (disk_guard): still modified -> no snapshot
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "unsaved" })
+      H.eq(true, vim.bo[buf].modified)
+      vim.api.nvim_exec_autocmds("User", { pattern = "AutoSaveWritePost", data = { saved_buffer = buf } })
+      vim.wait(700)
+      H.is_nil(tip(root, "refs/lochist/main"))
+      H.eq(0, log_count("\tadd "))
+      -- written: snapshot (content of the disk file)
+      write(root .. "/a.txt", "on disk\n")
+      vim.cmd("silent! checktime")
+      vim.api.nvim_buf_call(buf, function()
+        vim.cmd("silent! edit!")
+      end)
+      H.eq(false, vim.bo[buf].modified)
+      vim.api.nvim_exec_autocmds("User", { pattern = "AutoSaveWritePost", data = { saved_buffer = buf } })
+      H.wait_for(function()
+        return tip(root, "refs/lochist/main")
+      end, 15000, "snapshot")
+      H.eq("on disk\n", blob(root, "refs/lochist/main", "a.txt"))
+      -- no data / invalid buffer: no error
+      H.ok(pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "AutoSaveWritePost" }))
+      H.ok(
+        pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "AutoSaveWritePost", data = { saved_buffer = 99999 } })
+      )
+    end
+  )
 end)
 
 -- ----------------------------------------------------------- 30. not verified
 
-pending("picker UI (vim.ui.select with the real telescope/snacks picker)", "the tests drive vim.ui.select with a stub; the visual picker was not exercised")
-pending("undo of :LocalHistoryRestore in a real interactive session", "only `u` through feedkeys in headless nvim is covered")
-pending("the 30 s watchdog with a real 30 s wait", "the test shortens the 30000 ms defer to 300 ms and asserts the requested delay was 30000")
-pending("the 60 s stale ref-lock rule against a lock aged exactly 60 s", "only a 120 s old (removed) and a fresh (kept) lock are tested")
+pending(
+  "picker UI (vim.ui.select with the real telescope/snacks picker)",
+  "the tests drive vim.ui.select with a stub; the visual picker was not exercised"
+)
+pending(
+  "undo of :LocalHistoryRestore in a real interactive session",
+  "only `u` through feedkeys in headless nvim is covered"
+)
+pending(
+  "the 30 s watchdog with a real 30 s wait",
+  "the test shortens the 30000 ms defer to 300 ms and asserts the requested delay was 30000"
+)
+pending(
+  "the 60 s stale ref-lock rule against a lock aged exactly 60 s",
+  "only a 120 s old (removed) and a fresh (kept) lock are tested"
+)
 pending("a repository with a submodule", "not tested; only nested repos with and without commits")
 pending("thousands of snapshots (performance of log/prune)", "the largest history built is 120 commits")

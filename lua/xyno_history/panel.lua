@@ -16,7 +16,8 @@ local NS = api.nvim_create_namespace("xyno_history_panel")
 local MAX_BLOB = 2 * 1024 * 1024
 local MAX_FILES = 2000
 
-local HINTS = " q close  <Tab> pane  / search  c clear  L label  d mode  s scope  r revert file  x revert hunk  <CR> diff  gr refresh  y yank"
+local HINTS =
+  " q close  <Tab> pane  / search  c clear  L label  d mode  s scope  r revert file  x revert hunk  <CR> diff  gr refresh  y yank"
 
 -- ------------------------------------------------------------------ helpers
 
@@ -34,16 +35,24 @@ end
 
 local function stat_group(status)
   local c = status:sub(1, 1)
-  return c == "A" and "XynoHistoryAdded" or c == "D" and "XynoHistoryDeleted" or (c == "R" or c == "C") and "XynoHistoryRenamed" or "XynoHistoryModified"
+  return c == "A" and "XynoHistoryAdded"
+    or c == "D" and "XynoHistoryDeleted"
+    or (c == "R" or c == "C") and "XynoHistoryRenamed"
+    or "XynoHistoryModified"
 end
 
 local function unquote(path)
   if path:sub(1, 1) ~= '"' then
     return path
   end
-  return (path:sub(2, -2):gsub("\\(%d%d%d)", function(o)
-    return string.char(tonumber(o, 8))
-  end):gsub("\\(.)", { n = "\n", t = "\t", ['"'] = '"', ["\\"] = "\\" }))
+  return (
+    path
+      :sub(2, -2)
+      :gsub("\\(%d%d%d)", function(o)
+        return string.char(tonumber(o, 8))
+      end)
+      :gsub("\\(.)", { n = "\n", t = "\t", ['"'] = '"', ["\\"] = "\\" })
+  )
 end
 
 local function scratch(name)
@@ -166,11 +175,20 @@ function M.open(opts)
   local function bars()
     local scope = st.scope == "file" and ("file: " .. (st.file or "?")) or "project"
     local q = st.query and ("  /" .. st.query) or ""
-    vim.wo[st.wins.list].winbar = ("%%#XynoHistoryTitle# Local history · %s%%#XynoHistoryMatch#%s%%*"):format(esc(scope), esc(q))
+    vim.wo[st.wins.list].winbar = ("%%#XynoHistoryTitle# Local history · %s%%#XynoHistoryMatch#%s%%*"):format(
+      esc(scope),
+      esc(q)
+    )
     local snap = st.snaps[st.sel]
     vim.wo[st.wins.files].winbar = "%#XynoHistoryTitle# Changed files"
-      .. (snap and ("%#XynoHistoryAge# " .. esc(snap.hash:sub(1, 8)) .. (snap.nfiles > #snap.files and (" (first " .. #snap.files .. " of " .. snap.nfiles .. ")") or "")) or "")
-    vim.wo[st.wins.preview].winbar = ("%%#XynoHistoryTitle# Diff · %s"):format(st.mode == "current" and "snapshot vs current" or "snapshot vs previous")
+      .. (
+        snap
+          and ("%#XynoHistoryAge# " .. esc(snap.hash:sub(1, 8)) .. (snap.nfiles > #snap.files and (" (first " .. #snap.files .. " of " .. snap.nfiles .. ")") or ""))
+        or ""
+      )
+    vim.wo[st.wins.preview].winbar = ("%%#XynoHistoryTitle# Diff · %s"):format(
+      st.mode == "current" and "snapshot vs current" or "snapshot vs previous"
+    )
     vim.wo[st.wins.preview].statusline = "%#XynoHistoryHint#" .. esc(HINTS)
   end
 
@@ -178,7 +196,8 @@ function M.open(opts)
   local function render_list()
     local lines, marks = {}, {}
     if #st.snaps == 0 then
-      lines[1] = st.loaded and (st.query and "  no snapshot touched that text" or "  no local history yet") or "  loading..."
+      lines[1] = st.loaded and (st.query and "  no snapshot touched that text" or "  no local history yet")
+        or "  loading..."
     end
     for i, s in ipairs(st.snaps) do
       local auto = s.subject == "autosave" or s.subject == ""
@@ -365,9 +384,17 @@ function M.open(opts)
         return show_preview({ "", "  binary file" })
       end
       local title_b = ("%s@%s%s"):format(path_at, short, content and "" or " (not in this snapshot)")
-      local out, marks, hunk_lines, indices = unified(a_lines or {}, b_lines, cur_path .. (a_lines and " (current)" or " (deleted)"), title_b)
+      local out, marks, hunk_lines, indices =
+        unified(a_lines or {}, b_lines, cur_path .. (a_lines and " (current)" or " (deleted)"), title_b)
       st.hunks, st.hunk_lines = indices, hunk_lines
-      st.preview_ctx = { path = cur_path, snap = snap, b_lines = b_lines, have_current = a_lines ~= nil, bufnr = bufnr, in_snapshot = content ~= nil }
+      st.preview_ctx = {
+        path = cur_path,
+        snap = snap,
+        b_lines = b_lines,
+        have_current = a_lines ~= nil,
+        bufnr = bufnr,
+        in_snapshot = content ~= nil,
+      }
       highlight_query(out, marks)
       show_preview(out, marks)
     end)
@@ -412,7 +439,12 @@ function M.open(opts)
       end
       local args = vim.list_extend({ "log" }, refs)
       vim.list_extend(args, {
-        "--root", "--name-status", "-z", "--format=%x01%H%x09%at%x09%s", "-n", tostring(LH.config.list_limit or 100),
+        "--root",
+        "--name-status",
+        "-z",
+        "--format=%x01%H%x09%at%x09%s",
+        "-n",
+        tostring(LH.config.list_limit or 100),
       })
       if st.query and st.query ~= "" then
         vim.list_extend(args, { "-S" .. st.query })
@@ -474,7 +506,14 @@ function M.open(opts)
       LH._git(args, st.root, function(out)
         if st.scope == "file" and not st.query then
           local largs = vim.list_extend({ "log" }, refs)
-          vim.list_extend(largs, { "-z", "--format=%x01%H%x09%at%x09%s", "-n", tostring(LH.config.list_limit or 100), "--invert-grep", "--grep=^autosave$" })
+          vim.list_extend(largs, {
+            "-z",
+            "--format=%x01%H%x09%at%x09%s",
+            "-n",
+            tostring(LH.config.list_limit or 100),
+            "--invert-grep",
+            "--grep=^autosave$",
+          })
           return LH._git(largs, st.root, function(labels)
             finish(out, labels or "")
           end, true)
@@ -607,7 +646,10 @@ function M.open(opts)
     local cur = (st.scope == "file" and st.file) or f.path
     blob(snap.hash, f.path, function(content)
       if not content then
-        return vim.notify("local history: the file does not exist in that snapshot; pick an earlier one", vim.log.levels.WARN)
+        return vim.notify(
+          "local history: the file does not exist in that snapshot; pick an earlier one",
+          vim.log.levels.WARN
+        )
       end
       local bufnr = vim.fn.bufnr(abs(cur))
       local loaded = bufnr > 0 and api.nvim_buf_is_loaded(bufnr)
@@ -625,18 +667,25 @@ function M.open(opts)
           render_preview()
         end)
       else
-        confirm(("Write snapshot %s of %s to disk%s?"):format(short, cur, vim.uv.fs_stat(abs(cur)) and "" or " (the file is deleted: it is created)"), function()
-          vim.fn.mkdir(vim.fs.dirname(abs(cur)), "p")
-          local w = io.open(abs(cur), "wb")
-          if not w then
-            return vim.notify("local history: cannot write " .. abs(cur), vim.log.levels.ERROR)
+        confirm(
+          ("Write snapshot %s of %s to disk%s?"):format(
+            short,
+            cur,
+            vim.uv.fs_stat(abs(cur)) and "" or " (the file is deleted: it is created)"
+          ),
+          function()
+            vim.fn.mkdir(vim.fs.dirname(abs(cur)), "p")
+            local w = io.open(abs(cur), "wb")
+            if not w then
+              return vim.notify("local history: cannot write " .. abs(cur), vim.log.levels.ERROR)
+            end
+            w:write(content)
+            w:close()
+            vim.cmd("silent! checktime")
+            vim.notify(("restored %s from %s on disk"):format(cur, short))
+            render_preview()
           end
-          w:write(content)
-          w:close()
-          vim.cmd("silent! checktime")
-          vim.notify(("restored %s from %s on disk"):format(cur, short))
-          render_preview()
-        end)
+        )
       end
     end)
   end
