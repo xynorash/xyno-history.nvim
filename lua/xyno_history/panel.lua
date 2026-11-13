@@ -114,7 +114,7 @@ end
 
 --- Open the panel.
 --- @param opts? { scope?: "file"|"project", path?: string }
---- @return table state (st.actions are the key actions, for scripts and tests)
+--- @return table? state nil when the file is not in a git worktree (st.actions are the key actions, for scripts and tests)
 function M.open(opts)
   opts = opts or {}
   local origin = api.nvim_get_current_buf()
