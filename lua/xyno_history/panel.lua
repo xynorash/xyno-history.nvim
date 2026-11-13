@@ -293,13 +293,13 @@ function M.open(opts)
     marks[1] = { 0, 0, { line_hl_group = "XynoHistoryDiffDelete" } }
     marks[2] = { 1, 0, { line_hl_group = "XynoHistoryDiffAdd" } }
     local hunk_lines = {}
-    local text = vim.diff(a, b, { result_type = "unified", ctxlen = 3, algorithm = "histogram" })
+    local text = vim.text.diff(a, b, { result_type = "unified", ctxlen = 3, algorithm = "histogram" })
     if text == "" then
       out[#out + 1] = ""
       out[#out + 1] = "  identical"
       return out, marks, {}, {}
     end
-    local indices = vim.diff(a, b, { result_type = "indices", algorithm = "histogram" })
+    local indices = vim.text.diff(a, b, { result_type = "indices", algorithm = "histogram" })
     for _, l in ipairs(vim.split(text:gsub("\n$", ""), "\n", { plain = true })) do
       out[#out + 1] = l
       local c = l:sub(1, 1)
