@@ -30,7 +30,7 @@ if not spec then
 end
 
 package.path = repo .. "/lua/?.lua;" .. repo .. "/lua/?/init.lua;" .. package.path
-for _, name in ipairs({ "helpers", "harness" }) do
+for _, name in ipairs({ "helpers", "harness", "gitkit" }) do
   package.preload["xyno_history_test." .. name] = function()
     return dofile(repo .. "/tests/" .. name .. ".lua")
   end
